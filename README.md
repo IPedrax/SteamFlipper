@@ -27,8 +27,8 @@ Built for the **Linux Steam client** (Arch, Debian/Ubuntu, SteamOS, Fedora).
 ### <img src="assets/icons/terminal.svg" width="17" align="absmiddle" alt="" /> One command
 
 ```bash
-git clone https://github.com/madoiscool/BetterSteamTools.git
-cd BetterSteamTools/SteamFlipper
+git clone https://github.com/IPedrax/SteamFlipper.git
+cd SteamFlipper
 steam -shutdown
 ./tools/install_linux.sh
 ```
