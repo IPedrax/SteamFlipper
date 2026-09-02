@@ -5,6 +5,7 @@
 #   ./tools/install_linux.sh                    build + install SteamFlipper
 #   ./tools/install_linux.sh --no-build         install from an existing build/
 #   ./tools/install_linux.sh --with-millennium  also wire up Millennium (opt-in)
+#   ./tools/install_linux.sh --no-millennium    and stop doing so
 #   ./tools/install_linux.sh --uninstall        restore Steam to stock
 #
 # Everything lands under $HOME — nothing system-wide, no root, no PATH changes.
@@ -37,6 +38,12 @@ BUILD_TYPE="${SF_BUILD_TYPE:-Release}"
 # installer that only recognised the new name would treat an already-installed
 # older proxy as the stock library and "back it up" over the genuine one.
 MARKER_RE="SF_RUNTIME_PATH|BST_RUNTIME_PATH"
+
+# Remembers whether Millennium was wired up, so re-running after a Steam update
+# restores the same setup instead of silently dropping it. A Steam update
+# overwrites ubuntu12_64/libXtst.so.6, so "did I set this up before?" cannot be
+# answered by looking at the files.
+STATE_FILE="${LIBDIR}/install-state"
 
 say()  { printf '[*] %s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
@@ -103,7 +110,7 @@ uninstall() {
         rm -rf "${steam}/ubuntu12_32/steamflipper/pattern" 2>/dev/null || true
         say "    removed generated pattern files"
     fi
-    rm -rf "${LIBDIR}"
+    rm -rf "${LIBDIR}"          # includes install-state
     say "    removed ${LIBDIR}"
     # Legacy layout from the pre-bootstrap installer.
     rm -f "${HOME}/.local/bin/bst-steam"   # legacy name
@@ -119,13 +126,20 @@ uninstall() {
 
 # Spelled out rather than `[ a ] || [ b ] && { ... }`: under `set -e` that list
 # evaluates to non-zero when neither matches, which is a trap waiting to happen.
+# Default to whatever last time did, so --no-build after a Steam update is
+# enough. An explicit --with-millennium / --no-millennium always wins.
 WITH_MILLENNIUM=0
+MILLENNIUM_EXPLICIT=0
+if [ -f "${STATE_FILE}" ] && grep -q '^millennium=1$' "${STATE_FILE}" 2>/dev/null; then
+    WITH_MILLENNIUM=1
+fi
 NO_BUILD=0
 for arg in "$@"; do
     case "${arg}" in
         --uninstall|-u)     uninstall; exit 0 ;;
         --no-build)         NO_BUILD=1 ;;
-        --with-millennium)  WITH_MILLENNIUM=1 ;;
+        --with-millennium)  WITH_MILLENNIUM=1; MILLENNIUM_EXPLICIT=1 ;;
+        --no-millennium)    WITH_MILLENNIUM=0; MILLENNIUM_EXPLICIT=1 ;;
         -h|--help)
             sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -233,7 +247,11 @@ fi
 # dladdr on itself, which resolves beside the copy.
 MILL_DIR=/usr/lib/millennium
 if [ "${WITH_MILLENNIUM}" -eq 1 ] && [ -f "${MILL_DIR}/libmillennium_bootstrap_hhx64.so" ]; then
-    say "Millennium detected — wiring up its 64-bit side"
+    if [ "${MILLENNIUM_EXPLICIT}" -eq 0 ]; then
+        say "Millennium: re-applying (remembered from the last install)"
+    else
+        say "Millennium detected, wiring up its 64-bit side"
+    fi
     XTST64="${STEAM_DIR}/ubuntu12_64/libXtst.so.6"
     if [ -f "${XTST64}" ] && ! grep -qa "hhx64" "${XTST64}" 2>/dev/null; then
         [ -f "${XTST64}.sf-orig" ] || cp -a "${XTST64}" "${XTST64}.sf-orig"
@@ -252,6 +270,9 @@ fi
 if [ "${WITH_MILLENNIUM}" -eq 0 ] && [ -f "${MILL_DIR}/libmillennium_bootstrap_hhx64.so" ]; then
     say "Millennium detected but not touched (default). Add --with-millennium to set it up."
 fi
+
+mkdir -p "${LIBDIR}"
+printf 'millennium=%s\n' "${WITH_MILLENNIUM}" > "${STATE_FILE}"
 
 # --- migrate the pre-rename runtime directory --------------------------------
 # The module reads patterns and writes logs under <Steam>/steamflipper/. Before
