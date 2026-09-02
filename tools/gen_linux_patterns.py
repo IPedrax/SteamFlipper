@@ -93,6 +93,19 @@ VERIFIED = {
 }
 
 
+# The full set each component needs, regardless of how it is obtained (VProf
+# scope, derived from a call site, or pinned). Used to report the real gap on an
+# uncalibrated Steam build -- WANTED alone lists only the VProf-derivable names,
+# so intersecting against it hid the very entries that matter.
+REQUIRED = {
+    "steamclient": ("CheckAppOwnership", "BuildDepotDependency", "GetOrAddAppData",
+                    "GetPackageInfo", "CUtlMemoryGrow", "MarkLicenseAsChanged",
+                    "ProcessPendingLicenseUpdates", "CPackageInfoCacheGlobal"),
+    "steamui": ("BuildCompleteAppOverviewChange", "GetAppByID", "MarkAppChange",
+                "CSteamUIAppControllerRunFrame"),
+}
+
+
 def component_of(path):
     """steamclient.so -> 'steamclient'. Decides both the name list and the
     cache subdirectory PatternLoader reads."""
@@ -218,6 +231,77 @@ def make_sig(data, secs, vaddr, n=24):
     return " ".join(out)
 
 
+
+def derive_from_call_site(data, secs, got, fde_for, anchor_lo, anchor_hi):
+    """Recover GetPackageInfo and the CPackageInfoCache owner global by reading
+    the call CheckAppOwnership already makes.
+
+    CheckAppOwnership is VProf-derivable, and inside it Steam does exactly this:
+
+        lea  reg,[GOT + D]        ; &g_pCPackageInfoOwner
+        mov  [ebp - S],reg        ; stash it in a frame slot
+        ...
+        mov  eax,[ebp - S]        ; read the slot back
+        mov  eax,[eax]            ; deref -> the owner object
+        add  eax,<CACHE_OFF>      ; the cache is a subobject
+        push eax                  ; this
+        call <GetPackageInfo>
+
+    Both addresses and the subobject offset fall out of those bytes, so they do
+    not need pinning to a SHA and survive a Steam update. Returns {} unless the
+    whole chain matches and the call target is a real function entry.
+    """
+    lo_off = hi_off = None
+    for _, addr, off, size in secs:
+        if addr and addr <= anchor_lo < addr + size:
+            lo_off = off + (anchor_lo - addr)
+            hi_off = off + (anchor_hi - addr)
+            break
+    if lo_off is None:
+        return {}
+    body = data[lo_off:hi_off]
+
+    # add eax,imm32 ; push eax ; call rel32
+    m = re.search(rb"\x05(....)\x50\xe8(....)", body, re.S)
+    if not m:
+        return {}
+    cache_off = struct.unpack("<I", m.group(1))[0]
+    rel = struct.unpack("<i", m.group(2))[0]
+    call_end = anchor_lo + m.end()              # rel32 is relative to the next insn
+    target = (call_end + rel) & 0xFFFFFFFF
+    f = fde_for(target)
+    if not f or f[0] != target:
+        return {}                               # not a function entry: refuse
+
+    # Walk back for `mov eax,[ebp+disp32]` feeding that deref, then find where
+    # the same slot was written from a `lea reg,[GOT+disp32]`.
+    pre = body[:m.start()]
+    m2 = None
+    for m2 in re.finditer(rb"\x8b\x85(....)", pre, re.S):
+        pass                                    # last one before the call
+    if not m2:
+        return {"GetPackageInfo": target, "_cache_off": cache_off}
+    slot = m2.group(1)
+
+    glob = None
+    for st in re.finditer(rb"\x89\x85" + re.escape(slot), pre, re.S):
+        # The lea is not necessarily adjacent to the store; GCC interleaves
+        # unrelated setup between them (sub esp / mov ebx,edi in this build).
+        # Scan a short window back and take the closest lea to the store.
+        window = pre[max(0, st.start() - 24):st.start()]
+        last = None
+        for ml in re.finditer(rb"\x8d[\x80-\xbf](....)", window, re.S):
+            last = ml
+        if last:
+            glob = (got + struct.unpack("<i", last.group(1))[0]) & 0xFFFFFFFF
+            break
+
+    out = {"GetPackageInfo": target, "_cache_off": cache_off}
+    if glob is not None:
+        out["CPackageInfoCacheGlobal"] = glob
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary", type=pathlib.Path)
@@ -289,30 +373,58 @@ def main():
         else:
             print(f"  {name:<31} NOT FOUND (scopes tried: {', '.join(scopes)})", file=sys.stderr)
 
+    # Derived, not pinned: read them out of CheckAppOwnership's own call site,
+    # which VProf already located. These survive a Steam update.
+    if component == "steamclient" and "CheckAppOwnership" in found:
+        anchor_lo = found["CheckAppOwnership"]
+        f = fde_for(anchor_lo)
+        if f:
+            derived = derive_from_call_site(data, secs, got, fde_for, f[0], f[1])
+            cache_off = derived.pop("_cache_off", None)
+            for name, rva in derived.items():
+                found[name] = rva
+                print(f"  {name:<31} -> 0x{rva:X}  (derived from CheckAppOwnership)",
+                      file=sys.stderr)
+            if cache_off is not None:
+                print(f"  {'cache subobject offset':<31} 0x{cache_off:X}  "
+                      f"(must match kPackageInfoCacheOffset in Hooks_Package.cpp)",
+                      file=sys.stderr)
+
     # Merge in structurally-verified addresses, but only for the exact binary
     # they were confirmed against.
     pinned = VERIFIED.get(sha)
     if pinned:
         for name, rva in pinned.items():
+            if name in found:
+                continue   # already derived
             if fde_for(rva) and fde_for(rva)[0] != rva:
                 print(f"  {name:<31} REJECTED: 0x{rva:X} is not an FDE start", file=sys.stderr)
                 continue
             found[name] = rva
             print(f"  {name:<31} -> 0x{rva:X}  (verified, pinned to this sha256)", file=sys.stderr)
     else:
-        print(f"  NO VERIFIED TABLE for sha {sha[:16]}... — this is a Steam build\n"
-              f"  this generator has not been calibrated against. The pinned,\n"
-              f"  structurally-derived addresses (GetPackageInfo, CUtlMemoryGrow,\n"
-              f"  MarkLicenseAsChanged, ProcessPendingLicenseUpdates,\n"
-              f"  CPackageInfoCacheGlobal) cannot be re-derived automatically and\n"
-              f"  are NOT included.\n"
-              f"  Installing the VProf-only subset would give a partial hook set:\n"
-              f"  ownership injection silently does nothing while everything else\n"
-              f"  looks fine. Refusing.\n"
-              f"  Pass --partial to install anyway (ownership unlock will not work).",
-              file=sys.stderr)
-        if not args.partial:
-            return 1
+        # Only complain about what is actually still missing: the derivation
+        # pass above may already have recovered some of the pinned names.
+        missing = sorted(n for n in REQUIRED[component] if n not in found)
+        # CUtlMemoryGrow is load-bearing: without it the injected package cannot
+        # grow its app list, so ownership silently does nothing. The other two
+        # only drive the live license refresh.
+        critical = [n for n in missing if n in ("CUtlMemoryGrow",)]
+
+        if missing:
+            print(f"  Steam build sha {sha[:16]}... is not one this generator has\n"
+                  f"  been calibrated against. Still unresolved: {', '.join(missing)}",
+                  file=sys.stderr)
+        if critical:
+            print(f"  {', '.join(critical)} cannot be derived automatically and is\n"
+                  f"  required for ownership injection. Installing without it would\n"
+                  f"  give a hook set that looks healthy and unlocks nothing.\n"
+                  f"  Refusing. Pass --partial to install anyway.", file=sys.stderr)
+            if not args.partial:
+                return 1
+        elif missing:
+            print(f"  None of those are required for ownership injection; "
+                  f"continuing.", file=sys.stderr)
 
     if not found:
         sys.exit("nothing resolved; VProf strings may be absent from this build")
@@ -347,4 +459,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
