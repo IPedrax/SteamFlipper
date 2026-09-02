@@ -5,6 +5,7 @@
 #include <funchook.h>
 #include <algorithm>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 namespace SFPlatform::Detour {
@@ -25,11 +26,28 @@ struct ActiveHook {
 };
 std::vector<ActiveHook> g_activeHooks;
 
+// Handles whose hooks have already been uninstalled but whose trampolines are
+// still allocated, because entries referencing them remain in g_activeHooks.
+// funchook_destroy runs once the last of those is gone.
+std::unordered_set<funchook_t*> g_uninstalled;
+
 } // namespace
 
 bool BeginTransaction() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_funchook) {
+        // An abandoned transaction: BeginTransaction called twice without a
+        // Commit. Anything prepared on the old handle still points into
+        // trampolines this destroy unmaps, so roll those back first.
+        for (auto it = g_activeHooks.begin(); it != g_activeHooks.end(); ) {
+            if (it->hookHandle == g_funchook) {
+                if (it->target) *it->target = it->original;
+                it = g_activeHooks.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        g_uninstalled.erase(g_funchook);
         funchook_destroy(g_funchook);
         g_funchook = nullptr;
     }
@@ -64,6 +82,7 @@ bool CommitTransaction() {
                 ++it;
             }
         }
+        g_uninstalled.erase(g_funchook);
         funchook_destroy(g_funchook);
         g_funchook = nullptr;
         return false;
@@ -111,33 +130,40 @@ bool Detach(void** target, void* detour) {
 
     funchook_t* handle = it->hookHandle;
 
-    // funchook installs and uninstalls per *handle*, not per hook, and every
-    // hook prepared inside one transaction shares that handle. There is no way
-    // to remove just one.
-    const bool hasSiblings =
-        std::any_of(g_activeHooks.begin(), g_activeHooks.end(),
-                    [&](const ActiveHook& hook) {
-                        return &hook != &(*it) && hook.hookHandle == handle;
-                    });
-
-    if (hasSiblings) {
-        // Previously this erased the entry and returned true, so the caller
-        // (UNINSTALL_HOOK) nulled o##name while the detour was still installed
-        // and still routing through it. Report the failure instead: the hook
-        // stays live, and its trampoline stays valid, which is the truth.
-        SFP_LOG_WARN("Detach: hook shares a funchook handle with others; "
-                      "funchook cannot uninstall one in isolation, leaving it installed");
-        return false;
-    }
-
-    // Last hook on this handle: tear it down, then put the caller back on the
-    // real function before the trampoline is unmapped.
-    if (handle) {
+    // funchook uninstalls per *handle*, not per hook, and every hook prepared
+    // in one transaction shares that handle. So the first Detach touching a
+    // handle takes all of its hooks off at once. That is what makes it safe for
+    // the caller to null its original-function pointer straight after: no
+    // detour on this handle is routing any more, so nothing can call through a
+    // pointer that is about to become null.
+    //
+    // Previously this returned false whenever the hook had siblings, so
+    // uninstalling any multi-hook module simply failed. Before that it returned
+    // true without uninstalling anything, which left the detour live while the
+    // caller nulled the original it depended on.
+    if (handle && g_uninstalled.find(handle) == g_uninstalled.end()) {
         funchook_uninstall(handle, 0);
-        funchook_destroy(handle);
+        g_uninstalled.insert(handle);
+
+        // Put every hook on this handle back on the real function while its
+        // trampoline is still mapped.
+        for (auto& hook : g_activeHooks) {
+            if (hook.hookHandle == handle && hook.target)
+                *hook.target = hook.original;
+        }
     }
-    if (it->target) *it->target = it->original;
+
     g_activeHooks.erase(it);
+
+    // Destroy only once the last entry for this handle is gone. Doing it
+    // earlier would unmap trampolines that surviving entries still point at.
+    const bool stillReferenced =
+        std::any_of(g_activeHooks.begin(), g_activeHooks.end(),
+                    [&](const ActiveHook& hook) { return hook.hookHandle == handle; });
+    if (handle && !stillReferenced) {
+        funchook_destroy(handle);
+        g_uninstalled.erase(handle);
+    }
     return true;
 }
 
