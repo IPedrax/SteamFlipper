@@ -1,0 +1,30 @@
+// ─────────────────────────────────────────────────────────────────
+//  Module logger registry.
+//  This file is included multiple times with different definitions
+//  of SF_MOD(varName, fileName).
+//
+//  Usage:
+//    #define SF_MOD(v, f) ...   // declare logger
+//    #include "LogModules.def"
+//    #undef SF_MOD
+//
+//  Adding a new module:
+//    1. Add  SF_MOD(NewMod, "newmod")  below.
+//    2. Run CMake configure (LOG_NEWMOD_* macros are auto-generated).
+// ─────────────────────────────────────────────────────────────────
+
+SF_MOD(IPC,           "ipc")
+SF_MOD(NetPacket,     "netpacket")
+SF_MOD(Manifest,      "manifest")
+SF_MOD(KeyValue,      "keyvalue")
+SF_MOD(DecryptionKey, "decryptionkey")
+SF_MOD(Misc,          "misc")
+SF_MOD(Achievement,   "achievement")
+SF_MOD(Pics,          "pics")
+SF_MOD(OnlineFix,     "onlinefix")
+SF_MOD(RichPresence,  "richpresence")
+SF_MOD(Package,       "package")
+SF_MOD(SteamUI,       "steamui")
+SF_MOD(Inject,        "inject")
+SF_MOD(Pipe,          "pipe")
+SF_MOD(Platform,      "platform")

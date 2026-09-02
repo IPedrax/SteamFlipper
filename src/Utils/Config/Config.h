@@ -1,0 +1,88 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <unordered_set>
+#include <vector>
+
+#include "Steam/Types.h"
+
+namespace Config {
+
+    enum class LogLevel { Trace, Debug, Info, Warn, Error };
+
+    struct ManifestTimeouts {
+        uint32_t resolve = 5000;
+        uint32_t connect = 5000;
+        uint32_t send    = 10000;
+        uint32_t recv    = 10000;
+    };
+
+    // [[inject]] entry: a DLL loaded into a matching game process at the IPC handshake.
+    struct InjectDll {
+        std::string                 path;        // resolved absolute path
+        std::string                 whenCmdline; // substring required in the game command line
+        std::unordered_set<AppId_t> whenAppids;  // appids this entry applies to
+        bool                        allGames = false;  // false: only Lua-unlocked games
+    };
+
+    struct CloudSettings {
+        bool enabled = false;
+        std::string library;
+    };
+
+    struct LoadResult {
+        bool applied = false;
+        bool luaPathsChanged = false;
+    };
+
+    LoadResult Load(const std::string& configPath);
+
+    ManifestTimeouts GetManifestTimeouts();
+    LogLevel GetLogLevel();
+    std::string GetLogDir();
+    std::vector<std::string> GetLuaPaths();
+    std::vector<std::string> GetRemoteUrlTemplates();
+    CloudSettings GetCloudSettings();
+    bool GetStatsEnableApi();
+    bool GetUpdateEnabled();
+    bool GetDiagnosticsPopups();
+
+    // [manifest] — provider selection lives in ManifestClient (table-driven).
+    inline uint32_t manifestTimeoutResolve = 5000;
+    inline uint32_t manifestTimeoutConnect = 5000;
+    inline uint32_t manifestTimeoutSend    = 10000;
+    inline uint32_t manifestTimeoutRecv    = 10000;
+
+    // [log]
+    inline LogLevel logLevel = LogLevel::Debug;
+
+    // derived from configPath: <steam>/steamflipper/
+    inline std::string logDir;
+
+    // [lua]
+    inline std::vector<std::string> luaPaths;
+
+    // [remote] — one or more mirror templates, tried in order. Empty = built-in defaults.
+    inline std::vector<std::string> remoteUrlTemplates;
+
+    // [stats]
+    inline bool statsEnableApi = true;
+
+    // [update] - self-update check on startup (staged for next Steam launch).
+    inline bool updateEnabled = true;
+
+    // [diagnostics] — when false, SteamDiagnostics::ShowWarning stays silent.
+    // Signature/IPC specs are published per steamclient hash, and none exist
+    // yet for the Linux binaries, so every launch would otherwise raise the
+    // same three unactionable popups.
+    inline bool diagnosticsPopups = true;
+
+    // [[inject]] - optional DLL injection into matching game processes.
+    inline std::vector<InjectDll> injectDlls;
+
+    // [cloud] - optional Steam Cloud save redirection via CloudRedirect.
+    inline bool cloudEnabled = false;
+    inline std::string cloudLibrary;
+
+}

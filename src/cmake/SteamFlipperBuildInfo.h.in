@@ -1,0 +1,3 @@
+#pragma once
+
+#define STEAMFLIPPER_VERSION "@STEAMFLIPPER_VERSION@"

@@ -1,0 +1,37 @@
+# Build output
+build/
+.deps/
+
+# Visual Studio
+*.user
+*.suo
+*.vcxproj.user
+*.sln.user
+.vs/
+
+# IDE
+*.idea/
+*.code-workspace/
+
+# Temp files
+*.tmp
+*.log
+*.bak
+*~
+
+# DLLs (keep only source files)
+!.deps/**/*.dll
+# Python bytecode from tools/
+__pycache__/
+*.pyc
+
+# Installer backups
+*.bst-orig
+config.vdf.bst-*.bak
+
+# .NET build output (LuaTools/) — bin/obj are ~131 MB of regenerable artifacts
+[Bb]in/
+[Oo]bj/
+*.dll.config
+*.nuget.props
+*.nuget.targets
