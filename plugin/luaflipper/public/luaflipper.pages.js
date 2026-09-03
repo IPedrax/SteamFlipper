@@ -3445,29 +3445,44 @@
         }
         if (rel === "ahead") {
           done("Check again");
-          tell("This checkout is ahead of " + (branch || "the branch") +
-               " by " + plural(num(res.ahead), "commit") +
-               ". There is nothing to pull.");
+          // Commit counts only when there are commit counts. The check settles
+          // the direction from the version file and returns, so it often has no
+          // ancestry to report, and "ahead by 0 commits" is what that looked
+          // like. The version is the comparison the user cares about anyway.
+          tell("This build (" + (text(res.version) || "unknown") + ") is newer " +
+               "than " + (branch || "the branch") + " (" +
+               (text(res.remote_version) || text(res.remote) || "unknown") + ")." +
+               (num(res.ahead) ? " " + plural(num(res.ahead), "commit") +
+                                 " ahead." : "") +
+               " There is nothing to pull.");
           return;
         }
         if (rel === "diverged") {
           done("Check again");
           tell("This checkout has diverged from " + (branch || "the branch") +
-               ": " + plural(num(res.ahead), "commit") + " here that are not " +
-               "there, and " + plural(num(res.behind_by), "commit") + " there " +
-               "that are not here. Reconcile it in git rather than from a " +
-               "button.");
+               (num(res.ahead) || num(res.behind_by)
+                 ? ": " + plural(num(res.ahead), "commit") + " here that are " +
+                   "not there, and " + plural(num(res.behind_by), "commit") +
+                   " there that are not here"
+                 : "") +
+               ". Reconcile it in git rather than from a button.");
           return;
         }
 
         done("Check again");
-        // behind_by is the count; behind is a boolean, and reading it as a
-        // number would offer to pull one commit however far back this is.
+        // Version first, commits only when the check actually counted them:
+        // it settles the direction from the version file and returns without
+        // ancestry in the common case, which used to render as "0 commits
+        // behind" over a button offering to pull nothing.
+        var behindBy = num(res.behind_by);
         var box = el("div");
         box.appendChild(el("div", null,
-          plural(num(res.behind_by), "commit") + " behind " +
-          (branch || "the branch") + "."));
-        var apply = dialogBtn(el, "Pull " + plural(num(res.behind_by), "commit"));
+          "Version " + (text(res.remote_version) || "unknown") +
+          " is available. This build is " + (text(res.version) || "unknown") +
+          "." + (behindBy ? " " + plural(behindBy, "commit") + " behind." : "")));
+        var apply = dialogBtn(el, behindBy
+          ? "Pull " + plural(behindBy, "commit")
+          : "Pull from " + (branch || "the branch"));
         style(apply, { display: "inline-block", marginTop: "10px" });
         box.appendChild(apply);
         say(box);
