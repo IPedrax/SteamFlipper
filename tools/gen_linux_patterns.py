@@ -73,16 +73,10 @@ WANTED = {
 VERIFIED = {
     # steamclient.so
     "bc54101b290f9a5b4a0713c9084494a5f05097826f66a661dbe322c469b764a2": {
-        "GetPackageInfo":               0xFE8850,
-        "CUtlMemoryGrow":               0xFF4790,
+        # GetPackageInfo, CPackageInfoCacheGlobal and CUtlMemoryGrow are now
+        # derived, so they are no longer pinned here.
         "MarkLicenseAsChanged":         0x188C700,
         "ProcessPendingLicenseUpdates": 0x188C950,
-        # Not a function: the address of the global pointer to the object that
-        # owns CPackageInfoCache. Decoded from Steam's own call site, which does
-        #   lea eax,[GOT+0x3b7d4]; mov eax,[eax]; add eax,0xc40; call GetPackageInfo
-        # so the cache is a subobject at +0xC40 of *(this global). Lets us obtain
-        # `this` without patching GetPackageInfo (see Hooks_Package.cpp).
-        "CPackageInfoCacheGlobal":      0x2F85B20,
     },
     # steamui.so
     "b3d2a355684ada5e34a4faba103324660ce479597d0b18638c9680cd0c798b18": {
@@ -230,6 +224,68 @@ def make_sig(data, secs, vaddr, n=24):
             out.append(f"{op:02X}"); i += 1
     return " ".join(out)
 
+
+
+
+# CUtlMemory<T>::Grow prologue. Steam instantiates this template hundreds of
+# times, so the byte pattern alone is worthless as an identifier (569 hits).
+_GROW_PROLOGUE = re.compile(
+    rb"\x55\x57\x56\x53\xe8....\x81\xc3....\x83\xec\x0c"
+    rb"\x8b\x7c\x24\x24\x8b\x74\x24\x20\x85\xff\x0f\x8e", re.S)
+
+
+def _mask_pic(buf):
+    """Blank PIC-relative immediates so two instantiations of one template
+    compare equal: call rel32, add ebx/imm32, and lea reg,[reg+disp32]."""
+    b = bytearray(buf)
+    for m in re.finditer(rb"\xe8....|\x81\xc3....|\x8d[\x80-\xbf]....", bytes(buf), re.S):
+        for i in range(m.start() + (1 if buf[m.start()] == 0xE8 else 2), m.end()):
+            b[i] = 0
+    return bytes(b)
+
+
+def derive_cutlmemory_grow(data, secs, fde_for):
+    """Locate a CUtlMemory<uint32>::Grow.
+
+    OpenSteamTool only needs *a* Grow that handles 4-byte elements, because it
+    calls it on PackageInfo::AppIdVec (CUtlVector<AppId_t>). The template is
+    emitted many times over, and every 4-byte instantiation is the same code:
+    verified by masking PIC immediates (243 byte-identical bodies) and by
+    resolving their call targets, which match exactly. So any member of the
+    largest such equivalence class is usable.
+
+    Element size comes from the `shl eax,0x2` the body uses to scale the count,
+    which is what distinguishes a 4-byte instantiation from the rest.
+    """
+    def to_off(va):
+        for _, addr, off, size in secs:
+            if addr and addr <= va < addr + size:
+                return off + (va - addr)
+        return None
+
+    groups = {}
+    for name, addr, off, size in secs:
+        if name != ".text":
+            continue
+        for m in _GROW_PROLOGUE.finditer(data[off:off + size]):
+            va = addr + m.start()
+            f = fde_for(va)
+            if not f or f[0] != va:
+                continue                      # must be a real entry point
+            o = to_off(va)
+            body = data[o:o + (f[1] - f[0])]
+            if b"\xc1\xe0\x02" not in body:  # shl eax,2 -> 4-byte elements
+                continue
+            groups.setdefault(_mask_pic(body), []).append(va)
+
+    if not groups:
+        return None, 0
+    shape, addrs = max(groups.items(), key=lambda kv: len(kv[1]))
+    if len(addrs) < 8:
+        # A handful of look-alikes is not the mass-instantiated template; the
+        # confidence this derivation rests on is gone, so do not guess.
+        return None, len(addrs)
+    return min(addrs), len(addrs)
 
 
 def derive_from_call_site(data, secs, got, fde_for, anchor_lo, anchor_hi):
@@ -389,6 +445,17 @@ def main():
                 print(f"  {'cache subobject offset':<31} 0x{cache_off:X}  "
                       f"(must match kPackageInfoCacheOffset in Hooks_Package.cpp)",
                       file=sys.stderr)
+
+    if component == "steamclient" and "CUtlMemoryGrow" not in found:
+        grow, klass = derive_cutlmemory_grow(data, secs, fde_for)
+        if grow:
+            found["CUtlMemoryGrow"] = grow
+            print(f"  {'CUtlMemoryGrow':<31} -> 0x{grow:X}  (derived: 4-byte "
+                  f"CUtlMemory<T>::Grow, {klass} identical instantiations)",
+                  file=sys.stderr)
+        else:
+            print(f"  {'CUtlMemoryGrow':<31} NOT DERIVED (largest candidate class "
+                  f"was {klass}; too few to trust)", file=sys.stderr)
 
     # Merge in structurally-verified addresses, but only for the exact binary
     # they were confirmed against.

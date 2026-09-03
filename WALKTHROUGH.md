@@ -281,11 +281,15 @@ Working and verified on a live client (Arch, 32-bit Steam client):
 
 Known limits:
 
-- **Hook addresses are per-build, and most are pinned.** Nine functions are
-  located by RVA. Only three are recoverable automatically (VProf scopes); the
-  other six, including the whole license/package-injection path, are pinned to
-  the SHA-256 of a specific Steam build. On any other build the generator
-  refuses and the installer exits non-zero rather than claiming success. `tools/gen_linux_patterns.py`
+- **Hook addresses are per-build, but most are now derived.** Of the nine
+  located by RVA, three come from VProf scopes and three more are derived from
+  those: `GetPackageInfo` and the `CPackageInfoCache` owner global are read out
+  of the call `CheckAppOwnership` already makes, and `CUtlMemoryGrow` is found
+  as a 4-byte `CUtlMemory<T>::Grow` instantiation. Only `MarkLicenseAsChanged`
+  and `ProcessPendingLicenseUpdates` remain pinned to a SHA-256, and neither is
+  required for ownership injection, so a Steam update no longer stops the
+  unlock working. The generator still refuses rather than emitting a partial
+  set if something load-bearing goes missing. `tools/gen_linux_patterns.py`
   automates the recoverable ones and refuses to guess the rest.
 - **`steamui.so` hooks are disabled.** Installing them segfaults the client on
   startup, reproduced across several address sets including independently
