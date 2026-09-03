@@ -2747,8 +2747,11 @@
       var id = appid(raw);
       var file = text(m.file);
 
+      // `live` is "counts towards the totals", which a manifest awaiting the
+      // next Steam start does not: the loader never saw it.
+      var wasRemoved = !!(m && m.removed);
       var entry = {
-        live: true, id: raw, file: file, name: "",
+        live: !wasRemoved, id: raw, file: file, name: "",
         keys: num(m.keys), ids: num(m.ids), box: el("div")
       };
       rows.push(entry);
@@ -2791,11 +2794,25 @@
       if (id) libraryArt(img, id, "library_600x900.jpg",
                           "library_capsule", blank); else blank();
 
+      // Dimmed and marked, because a removed manifest sitting in the same grid
+      // as the live ones is the one thing on this page that could be misread as
+      // still installed.
+      var mark = null;
+      if (wasRemoved) {
+        style(cap, { opacity: "0.45" });
+        mark = style(el("div", null, "removed"), {
+          position: "absolute", top: "6px", left: "6px", padding: "2px 6px",
+          borderRadius: "2px", fontSize: "11px", fontWeight: "bold",
+          color: "#111318", background: "#c8ccd0"
+        });
+        cap.appendChild(mark);
+      }
+
       // A keyless manifest is the one state where the app is in the library and
       // still cannot be played, so it is said on the tile rather than only in
       // the panel that has to be hovered to be read.
       var flag = style(el("div", null, "no keys"), {
-        position: "absolute", top: "6px", left: "6px", display: "none",
+        position: "absolute", top: "6px", right: "6px", display: "none",
         padding: "2px 6px", borderRadius: "2px", fontSize: "11px",
         fontWeight: "bold", color: "#ffffff", background: "rgba(176,60,60,0.92)"
       });
@@ -2887,6 +2904,7 @@
       var up = style(storeBtn(el, "Update", BLUE, BLUE_HOT), btnCss);
       upSlot.appendChild(up);
 
+
       // Two buttons swapped rather than one repainted: storeBtn closes over the
       // pair it was built with, so its own mouseleave would put an armed Remove
       // back to its resting fill the moment the pointer left it.
@@ -2914,6 +2932,7 @@
       function lock(on) {
         busy = on;
         [up, rm, yes].forEach(function (b) {
+          if (!b || !b.parentNode) return;   // swapped out, or never shown
           style(b, {
             pointerEvents: on ? "none" : "auto", opacity: on ? "0.55" : "1"
           });
@@ -3039,15 +3058,64 @@
             entry.live = false;
             retally();
             refilter();
-            say(true, named() + " removed. The manifest was kept " +
-                "as " + (text(res.kept) || (file + ".removed")) + " rather " +
-                "than deleted, because it holds the only copy of its depot " +
-                "keys: rename it back to .lua to put it back. Steam keeps the " +
-                "ownership until it restarts, since the loader has already " +
+            say(true, named() + " removed. It is held as " +
+                (text(res.kept) || (file + ".removed")) + " until Steam " +
+                "restarts, and Restore on its tile puts it back until then. " +
+                "That window exists because the file holds the only copy of " +
+                "its depot keys on this machine. Steam keeps the ownership " +
+                "for this session either way, since the loader has already " +
                 "read the file.", null);
           })
           .catch(function (e) { failed(named() + ": remove failed: " + why(e)); });
       });
+
+      /* ----------------------------------------------------- restore --- */
+
+      // A removed manifest has one action, and it is the undo. Update and
+      // Remove are both meaningless against a file the loader is not reading,
+      // so they are replaced rather than disabled. This runs after both are
+      // built: lock() paints all three buttons, and half of them not existing
+      // yet is how that turns into a broken tile.
+      if (wasRemoved) {
+        var put = style(storeBtn(el, "Restore", BLUE, BLUE_HOT), btnCss);
+        only(upSlot, put);
+        rmSlot.style.display = "none";
+
+        put.addEventListener("click", function () {
+          if (busy) return;
+          lock(true);
+          put.textContent = "Restoring";
+          fetch(API + "restore?appid=" + encodeURIComponent(raw))
+            .then(json)
+            .then(function (res) {
+              if (!res || typeof res !== "object") throw new Error("unreadable reply");
+              if (res.error) {
+                lock(false);
+                put.textContent = "Restore";
+                say(false, named() + ": " + text(res.error), null);
+                return;
+              }
+              // Nothing is re-read here: the loader collected its directories
+              // at startup, so the file is back but the ownership is not until
+              // Steam restarts. Saying otherwise would send someone to a
+              // library that still does not have the game.
+              cap.style.opacity = "";
+              if (mark && mark.parentNode) mark.parentNode.removeChild(mark);
+              put.textContent = "Restored";
+              entry.live = true;
+              retally();
+              refilter();
+              say(true, named() + " restored as " + (text(res.file) || file) +
+                  ". Steam picks it up when it restarts, and it is no longer " +
+                  "deleted at the next start.", null);
+            })
+            .catch(function (e) {
+              lock(false);
+              put.textContent = "Restore";
+              say(false, named() + ": restore failed: " + why(e), null);
+            });
+        });
+      }
 
       /* -------------------------------------------------------- name --- */
 

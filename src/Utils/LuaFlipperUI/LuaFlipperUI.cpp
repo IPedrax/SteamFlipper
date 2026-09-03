@@ -420,30 +420,87 @@ namespace {
         return out;
     }
 
+    /**
+     * Manifests taken out of service but not yet gone.
+     *
+     * Remove renames rather than unlinks so the removal can be undone, and the
+     * loader ignores these because it collects `.lua` and these end in
+     * `.removed`. They are swept at the next Steam start, which is what bounds
+     * the undo to the session that did the removing.
+     */
+    std::vector<std::filesystem::path> RemovedFiles() {
+        std::vector<std::filesystem::path> out;
+        std::error_code ec;
+        for (const std::string& dir : LuaConfig::MergeWatchDirs(
+                 Config::GetLuaPaths(), (std::filesystem::path(g_steamPath) /
+                                         "config" / "stplug-in").string())) {
+            for (auto it = std::filesystem::directory_iterator(dir, ec);
+                 !ec && it != std::filesystem::directory_iterator(); ++it) {
+                if (it->is_regular_file(ec) &&
+                    it->path().extension() == ".removed")
+                    out.push_back(it->path());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Delete every tombstone left by a previous session.
+     *
+     * Runs once at startup, which is the moment the undo they exist for expires
+     * anyway: the loader has just re-read the directory, so a manifest that is
+     * still `.removed` is one the user did not put back, and ownership for it
+     * is gone from this Steam either way.
+     */
+    void SweepRemoved() {
+        std::error_code ec;
+        size_t gone = 0;
+        for (const auto& p : RemovedFiles()) {
+            if (std::filesystem::remove(p, ec) && !ec) gone++;
+        }
+        if (gone)
+            LOG_INFO("LuaFlipperUI: deleted {} manifest(s) removed last session",
+                     gone);
+    }
+
+    // Ownership entries and how many of them carry a decryption key. A file
+    // with no keyed line registers ownership it cannot decrypt a byte of.
+    void CountAppIds(const std::string& body, size_t& ids, size_t& keys) {
+        ids = 0;
+        keys = 0;
+        for (size_t i = body.find("addappid("); i != std::string::npos;
+             i = body.find("addappid(", i + 1)) {
+            // A keyed entry is addappid(id, 1, "<64 hex>").
+            size_t end = body.find(')', i);
+            if (end == std::string::npos) break;
+            ids++;
+            if (body.find('"', i) < end) keys++;
+        }
+    }
+
     std::string JsonManifests() {
         std::string j = "{\"manifests\":[";
         bool first = true;
-        for (const auto& p : LuaFiles()) {
-            const std::string body = ReadWholeFile(p);
-            // Count the two forms the loader understands, so the page can show
-            // at a glance whether a manifest carries decryption keys or only
-            // ownership. A file with no keyed line cannot decrypt anything.
-            size_t keys = 0, ids = 0;
-            for (size_t i = body.find("addappid("); i != std::string::npos;
-                 i = body.find("addappid(", i + 1)) {
-                // A keyed entry is addappid(id, 1, "<64 hex>").
-                size_t end = body.find(')', i);
-                if (end == std::string::npos) break;
-                ids++;
-                if (body.find('"', i) < end) keys++;
-            }
+        auto emit = [&](const std::filesystem::path& p,
+                        const std::string& appId, bool removed) {
+            size_t ids = 0, keys = 0;
+            CountAppIds(ReadWholeFile(p), ids, keys);
             j += first ? "" : ",";
             first = false;
             j += "{\"file\":\"" + JsonEscape(p.filename().string()) + "\"";
-            j += ",\"appid\":\"" + JsonEscape(p.stem().string()) + "\"";
+            j += ",\"appid\":\"" + JsonEscape(appId) + "\"";
             j += ",\"ids\":" + std::to_string(ids);
-            j += ",\"keys\":" + std::to_string(keys) + "}";
-        }
+            j += ",\"keys\":" + std::to_string(keys);
+            j += ",\"removed\":" + std::string(removed ? "true" : "false") + "}";
+        };
+
+        for (const auto& p : LuaFiles()) emit(p, p.stem().string(), false);
+
+        // Listed alongside the live ones so the page can offer to put them
+        // back. Out of service either way: the loader never saw them.
+        for (const auto& p : RemovedFiles())
+            emit(p, std::filesystem::path(p.stem()).stem().string(), true);
+
         j += "]}";
         return j;
     }
@@ -948,6 +1005,37 @@ namespace {
      * The loader only reads *.lua, so the renamed file is inert immediately and
      * the watcher drops its ownership entries on the next scan.
      */
+    /**
+     * Put a removed manifest back.
+     *
+     * Only reachable while the tombstone exists, which is until the next Steam
+     * start. Steam has already forgotten the ownership by then and the file is
+     * swept, so there is nothing to restore and nothing that claims otherwise.
+     */
+    std::string JsonRestore(const std::string& appId) {
+        std::error_code ec;
+        for (const auto& p : RemovedFiles()) {
+            if (std::filesystem::path(p.stem()).stem().string() != appId) continue;
+            std::filesystem::path back = p;
+            back.replace_extension();          // drop ".removed"
+            if (std::filesystem::exists(back, ec)) {
+                return "{\"error\":\"" + JsonEscape(back.filename().string()) +
+                       " already exists; the manifest was re-added since it was "
+                       "removed\"}";
+            }
+            std::filesystem::rename(p, back, ec);
+            if (ec) {
+                return "{\"error\":\"could not restore " +
+                       JsonEscape(p.filename().string()) + ": " +
+                       JsonEscape(ec.message()) + "\"}";
+            }
+            LOG_INFO("LuaFlipperUI: restored {}", back.filename().string());
+            return "{\"ok\":true,\"file\":\"" +
+                   JsonEscape(back.filename().string()) + "\"}";
+        }
+        return "{\"error\":\"nothing removed for that app id\"}";
+    }
+
     std::string JsonRemove(const std::string& appId) {
         std::error_code ec;
         for (const auto& p : LuaFiles()) {
@@ -1367,6 +1455,11 @@ namespace {
         if (path == "/api/cloud")        return JsonCloud();
         if (path == "/api/cloud/enable")  return JsonCloudEnable();
         if (path == "/api/cloud/disable") return JsonCloudDisable();
+        if (path == "/api/restore") {
+            const std::string id = QueryParam(fullPath, "appid");
+            if (id.empty()) return "{\"error\":\"no appid\"}";
+            return JsonRestore(id);
+        }
         if (path == "/api/remove") {
             const std::string appId = QueryParam(fullPath, "appid");
             if (appId.empty()) return "{\"error\":\"no appid given\"}";
@@ -1626,11 +1719,18 @@ namespace {
 
 void Initialize(const char* steamInstallPath) {
 #if defined(__linux__)
+    g_steamPath = steamInstallPath ? steamInstallPath : "";
+
+    // Ahead of every gate below, because this is disk hygiene rather than UI: a
+    // tombstone from a previous session is a removal the user did not undo, and
+    // its undo window closed when Steam restarted. Behind the gates it would
+    // survive forever on an install that later turned the UI off.
+    SweepRemoved();
+
     if (!Config::GetUiEnabled()) {
         LOG_INFO("LuaFlipperUI: [ui].enabled is false, client UI disabled");
         return;
     }
-    g_steamPath = steamInstallPath ? steamInstallPath : "";
 
     // Steam only opens its CEF debugger when this marker exists, and it is the
     // only channel a standalone injector has into the frontend.
