@@ -183,27 +183,31 @@
    */
   var hiddenView = null;
 
-  function standAside() {
+  function standAside(px) {
     if (hiddenView) return;
-    // The .Browser child, not the .BrowserWrapper around it. The wrapper also
-    // holds the address bar those pages draw above the content, and hiding the
-    // pair took that with it. It is also the element openPage hides, and two
-    // pieces of code writing display onto one node is how the view got stuck:
-    // openPage saved "none" as the value to restore, having been handed a node
-    // the menu had just hidden.
+    // Moved down, not hidden. Hiding it blanked the page, which is a worse
+    // trade than the overlap it was fixing: the point of those pages is that
+    // they are showing something. The native surface follows its layout box,
+    // so offsetting the box slides the page down and leaves the strip the menu
+    // needs to whatever paints behind it.
+    //
+    // .Browser, not the .BrowserWrapper around it: the wrapper holds the
+    // address bar, which should not move, and it is the node openPage hides.
+    // Two pieces of code writing to one node is how the view got stuck hidden
+    // for a whole session.
     var views = document.querySelectorAll(".BrowserWrapper .Browser");
     for (var i = 0; i < views.length; i++) {
-      if (views[i].style.display === "none") continue;      // already hidden
+      if (views[i].style.display === "none") continue;      // Steam already hid it
       if (!views[i].getBoundingClientRect().height) continue;
-      hiddenView = { el: views[i], display: views[i].style.display };
-      views[i].style.display = "none";
+      hiddenView = { el: views[i], margin: views[i].style.marginTop };
+      views[i].style.marginTop = px + "px";
       return;
     }
   }
 
   function comeBack() {
     if (!hiddenView) return;
-    hiddenView.el.style.display = hiddenView.display;
+    hiddenView.el.style.marginTop = hiddenView.margin;
     hiddenView = null;
   }
 
@@ -269,7 +273,6 @@
     // we are about to open.
     cancelClose();
     if (document.getElementById(MENU_ID)) return;
-    standAside();
 
     // Wear Steam's own classes when the injector could supply them (see
     // steamMenuClasses). The readable aliases carry no styling of their own -
@@ -310,6 +313,9 @@
     menu.addEventListener("mouseleave", scheduleClose);
 
     document.body.appendChild(menu);
+    // After mounting, because the offset has to be the menu's real height and
+    // that is not known until it has been laid out.
+    standAside(Math.ceil(menu.getBoundingClientRect().height) + 4);
     document.addEventListener("mousedown", onOutside, true);
     document.addEventListener("keydown", onEsc, true);
   }
