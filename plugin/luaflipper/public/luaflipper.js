@@ -231,6 +231,7 @@
 
   function closeMenu() {
     cancelClose();
+    hidePopupMenu();
     var m = document.getElementById(MENU_ID);
     if (m) m.remove();
     // Always, with no exception for one of our pages being open. Leaving it
@@ -286,10 +287,66 @@
    * supplies defaults measured from the live Account Menu, so it matches the
    * stock skin and still gets restyled by a theme.
    */
+  /**
+   * Ask the module to put the menu up as a real Steam window.
+   *
+   * Preferred over the in-page menu because a browser view -- Store, Community,
+   * the profile -- is a native surface composited over this window's DOM and
+   * beats it whatever the stacking order says. A top-level window is what Steam
+   * uses for its own nav menus and is not in that fight at all.
+   *
+   * Coordinates are this window's, converted on the far side: only the popup
+   * script can ask where this window sits on screen.
+   *
+   * `then(false)` means fall back, and it fires for every failure: no module,
+   * no popup helper, or Steam internals that have moved. The in-page menu is
+   * worse on three pages and correct everywhere, so it is the safety net.
+   */
+  var popupMenuUp = false;
+
+  function tryPopupMenu(tab, then) {
+    var r = tab.getBoundingClientRect();
+    var x = Math.round(r.left);
+    var y = Math.round(r.bottom);
+    if (x < 0 || y < 0) { then(false); return; }
+    var settled = false;
+    function done(ok) { if (!settled) { settled = true; then(ok); } }
+    try {
+      fetch(API + "navmenu/show?x=" + x + "&y=" + y)
+        .then(function (res) { return res.json(); })
+        .then(function (res) { done(!!(res && res.ok)); })
+        .catch(function () { done(false); });
+    } catch (e) { done(false); return; }
+    // A stalled request must not leave the tab with no menu at all.
+    setTimeout(function () { done(false); }, 600);
+  }
+
+  function hidePopupMenu() {
+    if (!popupMenuUp) return;
+    popupMenuUp = false;
+    try { fetch(API + "navmenu/hide"); } catch (e) {}
+  }
+
+  // Called by the module when an item in the popup is clicked. The popup has no
+  // way back to this window on its own.
+  window.__luaflipperOpen = function (page) {
+    popupMenuUp = false;
+    openPage(page);
+  };
+
   function openMenu(tab) {
     // A close scheduled by a previous mouseleave must not fire onto the menu
     // we are about to open.
     cancelClose();
+    if (document.getElementById(MENU_ID) || popupMenuUp) return;
+
+    tryPopupMenu(tab, function (ok) {
+      if (ok) { popupMenuUp = true; return; }
+      inPageMenu(tab);
+    });
+  }
+
+  function inPageMenu(tab) {
     if (document.getElementById(MENU_ID)) return;
 
     // Wear Steam's own classes when the injector could supply them (see

@@ -1082,6 +1082,100 @@ namespace {
         return "{\"ok\":true}";
     }
 
+    /* ------------------------------------------------------------ nav menu --- */
+
+    /**
+     * Evaluate one expression in a CEF target picked by a marker in /json/list.
+     *
+     * Short-lived on purpose. The nav menu is three calls a second at worst,
+     * each a few milliseconds on loopback, and a connection held open per
+     * target would be three more things to notice dying.
+     */
+    bool EvalInTarget(const std::string& marker, const std::string& expr,
+                      std::string* value = nullptr) {
+        const std::string list = HttpGet(kCdpPort, "/json/list");
+        const size_t at = list.find(marker);
+        if (at == std::string::npos) return false;
+        const std::string ws = JsonString(list, "webSocketDebuggerUrl", at);
+        if (ws.empty()) return false;
+
+        WebSocket s;
+        if (!s.Open(ws)) return false;
+        s.Post("Runtime.evaluate",
+               "{\"expression\":\"" + JsonEscape(expr) + "\",\"returnByValue\":true}");
+        // Read the reply when the caller wants the answer rather than just
+        // delivery. Getting that distinction wrong is what made the client
+        // window think a menu was up when nothing had been drawn.
+        const std::string reply = value ? s.Recv() : (s.Recv(), std::string());
+        s.Close();
+        if (value) {
+            const size_t r = reply.find("\"result\"");
+            *value = (r == std::string::npos) ? "" : JsonString(reply, "value", r);
+            if (value->empty() && reply.find("\"value\":true") != std::string::npos)
+                *value = "true";
+        }
+        return true;
+    }
+
+    // The dropdown, in the order the client window draws it. Kept here so the
+    // popup script has no opinion about what the menu contains.
+    constexpr const char* kMenuItems =
+        "[{page:'unlocker',label:'Unlocker'},{page:'manage',label:'Manage'},"
+        "{page:'fixes',label:'Fixes'},{page:'config',label:'Config'}]";
+
+    /**
+     * Show the dropdown as a real Steam window.
+     *
+     * x and y arrive as client coordinates of the tab in the client window;
+     * the popup script adds that window's screen origin, which only it can ask
+     * for. Returns whether the call was delivered, not whether a menu appeared:
+     * the client window falls back to its in-page menu on a false, and the
+     * popup script answers false itself when Steam's internals are not there.
+     */
+    std::string JsonNavMenuShow(const std::string& fullPath) {
+        const std::string x = QueryParam(fullPath, "x");
+        const std::string y = QueryParam(fullPath, "y");
+        if (x.empty() || y.empty()) return "{\"ok\":false}";
+        // Digits only: these go straight into an expression.
+        for (const std::string* v : { &x, &y }) {
+            if (v->find_first_not_of("0123456789") != std::string::npos)
+                return "{\"ok\":false}";
+        }
+        // String rather than boolean, because the reply's value field is read
+        // as text and "false" and an absent helper have to be told apart.
+        const std::string expr =
+            "String(!!(window.__luaflipperMenu && window.__luaflipperMenu.show(" +
+            x + "," + y + "," + kMenuItems + ")))";
+        std::string got;
+        const bool sent = EvalInTarget("\"SharedJSContext\"", expr, &got);
+        const bool shown = sent && got == "true";
+        return std::string("{\"ok\":") + (shown ? "true" : "false") + "}";
+    }
+
+    std::string JsonNavMenuHide() {
+        EvalInTarget("\"SharedJSContext\"",
+                     "window.__luaflipperMenu&&window.__luaflipperMenu.hide()");
+        return "{\"ok\":true}";
+    }
+
+    /**
+     * A click in the popup, handed to the window that owns the tab.
+     *
+     * The page name is checked against the menu rather than passed through: it
+     * arrives from a document that any script in SharedJSContext could reach,
+     * and it ends up inside an expression evaluated in the client window.
+     */
+    std::string JsonNavMenuPick(const std::string& fullPath) {
+        const std::string page = QueryParam(fullPath, "page");
+        if (page != "unlocker" && page != "manage" &&
+            page != "fixes" && page != "config")
+            return "{\"error\":\"unknown page\"}";
+
+        EvalInTarget("\"Steam\"",
+                     "window.__luaflipperOpen&&window.__luaflipperOpen('" + page + "')");
+        return "{\"ok\":true}";
+    }
+
     /* --------------------------------------------------------- steam urls --- */
 
     /**
@@ -1764,6 +1858,10 @@ namespace {
 
         // Fixes. The catalog and the per-app list are free; the download is the
         // one call that needs the user's own lua.tools token.
+        if (path == "/api/navmenu/show") return JsonNavMenuShow(fullPath);
+        if (path == "/api/navmenu/hide") return JsonNavMenuHide();
+        if (path == "/api/navmenu/pick") return JsonNavMenuPick(fullPath);
+
         if (path == "/api/hubcap/stats") return JsonHubcapStats();
         if (path == "/api/hubcap/save")  return JsonHubcapSave(fullPath);
         if (path == "/api/sources/order") return JsonSourcesSave(fullPath);
@@ -1925,12 +2023,20 @@ namespace {
         // Store integration. A separate script because it runs in a separate
         // target: the store is ordinary web pages, not the client's React app.
         const std::string store = ReadWholeFile(uiDir / "luaflipper.store.js");
+        // The nav menu as a real window. Lives in SharedJSContext because that
+        // is where g_PopupManager is; optional, and its absence only costs the
+        // popup route.
+        const std::string popup = ReadWholeFile(uiDir / "luaflipper.popup.js");
         if (js.empty()) {
             LOG_ERROR("LuaFlipperUI: no UI assets at {}", uiDir.string());
             return;
         }
 
         std::string lastTarget;
+        // The SharedJSContext the popup helper was last injected into. That
+        // context is recreated on its own schedule, and a new one arrives
+        // without the helper.
+        std::string lastShared;
         // Store targets we are bridging, and whether that bridge is still up.
         std::map<std::string, std::shared_ptr<std::atomic<bool>>> storeTargets;
         bool haveClasses = false;
@@ -1976,6 +2082,23 @@ namespace {
                 for (auto it = storeTargets.begin(); it != storeTargets.end();)
                     it = (std::find(live.begin(), live.end(), it->first) == live.end())
                              ? storeTargets.erase(it) : std::next(it);
+            }
+
+            // SharedJSContext holds Steam's popup manager and nothing of ours,
+            // so this is injected separately from the client window's UI and
+            // re-checked each pass: that context is recreated on its own
+            // schedule and takes the helper with it when it goes.
+            if (!popup.empty()) {
+                const size_t sj = list.find("\"SharedJSContext\"");
+                if (sj != std::string::npos) {
+                    const std::string sjws = JsonString(list, "webSocketDebuggerUrl", sj);
+                    if (!sjws.empty() && sjws != lastShared) {
+                        if (InjectInto(sjws, popup)) {
+                            lastShared = sjws;
+                            LOG_INFO("LuaFlipperUI: nav popup helper injected");
+                        }
+                    }
+                }
             }
 
             // The nav lives in the main client window. SharedJSContext holds an

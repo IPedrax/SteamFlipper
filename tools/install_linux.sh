@@ -328,7 +328,7 @@ fi
 # here on every launch and a reinstall is enough to pick up UI changes.
 say "Installing client UI"
 mkdir -p "${STEAM_DIR}/steamflipper/ui"
-for f in luaflipper.js luaflipper.pages.js luaflipper.store.js luaflipper.css; do
+for f in luaflipper.js luaflipper.pages.js luaflipper.store.js luaflipper.popup.js luaflipper.css; do
     if [ -f "${REPO_ROOT}/plugin/luaflipper/public/${f}" ]; then
         install -Dm644 "${REPO_ROOT}/plugin/luaflipper/public/${f}" \
                        "${STEAM_DIR}/steamflipper/ui/${f}"
