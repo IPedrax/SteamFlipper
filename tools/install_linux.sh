@@ -150,7 +150,7 @@ done
 # --- prerequisites -----------------------------------------------------------
 say "Checking prerequisites"
 missing=()
-for t in cmake ninja python3 gcc; do
+for t in cmake ninja python3 gcc readelf; do
     command -v "${t}" >/dev/null 2>&1 || missing+=("${t}")
 done
 [ ${#missing[@]} -gt 0 ] && die "missing tools: ${missing[*]}"
@@ -300,6 +300,14 @@ fi
 # verified ones. Those hooks only drive library cosmetics and app-removal, not
 # unlocking, so leaving them off costs nothing. The generator refuses them by
 # default too (--allow-steamui to override while debugging).
+# The module regenerates these itself after a Steam update, which needs the
+# generator to still be somewhere it can find. Beside its own data rather than
+# in the source tree: an install outlives the checkout it came from, and a Deck
+# updates Steam often enough that "re-run the installer" is the step that never
+# happens.
+install -Dm755 "${REPO_ROOT}/tools/gen_linux_patterns.py" \
+               "${STEAM_DIR}/ubuntu12_32/steamflipper/gen_linux_patterns.py"
+
 say "Generating hook patterns for this Steam build"
 PATTERNS_OK=1
 if [ -f "${STEAM_DIR}/ubuntu12_32/steamclient.so" ]; then

@@ -6,6 +6,7 @@
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
 #include "Utils/Support/FnvHash.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -171,6 +172,90 @@ static void ShowDownloadFailedPopup(const std::string& dllName,
         "       https://github.com/OpenSteam001/OpenSteamTool/issues");
 }
 
+/**
+ * Rebuild this Steam build's pattern file on the machine that needs it.
+ *
+ * Hook addresses are per-Steam-build, and Steam updates itself. Every route out
+ * of that has a hole: the published sets only cover builds someone has already
+ * calibrated, and re-running the installer is a step nobody knows to take
+ * because the symptom is silent, ownership injection simply stops. A Steam Deck
+ * updates often enough that the window between an update and a published set is
+ * where most installs live.
+ *
+ * The generator that the installer runs is deterministic and derives everything
+ * it needs from the binary in front of it, so the machine can run it again
+ * itself. The installer leaves a copy beside the module for exactly this.
+ *
+ * Cheap to be wrong about: the generator refuses a binary it cannot read rather
+ * than emitting a guess, so the worst case is the same failure with one more
+ * log line. It also needs readelf, which is present wherever the toolchain that
+ * built this module is.
+ */
+static bool RegenerateFor(const std::string& dllPath, const std::string& component)
+{
+#if defined(__linux__)
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    // Beside the module's own data, which is where the installer puts it and
+    // the one path that does not assume the source tree is still on disk.
+    // steamui is never generated. The generator refuses it by design, because
+    // installing those addresses segfaults the client on startup, so asking is
+    // a guaranteed non-zero exit and a warning about a component that is
+    // deliberately unsupported.
+    if (component != "steamclient") return false;
+
+    const fs::path gen = fs::path(dllPath).parent_path() /
+                         "steamflipper" / "gen_linux_patterns.py";
+    if (!fs::exists(gen, ec)) {
+        LOG_WARN("PatternLoader: no generator at {}, cannot self-calibrate; "
+                 "re-run tools/install_linux.sh after a Steam update",
+                 gen.string());
+        return false;
+    }
+
+    /*
+     * Run it outside the steam-runtime.
+     *
+     * The generator shells out to readelf, and Steam's own environment breaks
+     * it: LD_LIBRARY_PATH pins the runtime's libcurl, which does not carry the
+     * CURL_OPENSSL_4 version that readelf's libdebuginfod needs, so the host
+     * readelf refuses to start and the generator reports no sections. PATH is
+     * the runtime's too, whose binutils is older than the output this parses.
+     *
+     * Steam exports the pre-runtime values under SYSTEM_* for exactly this, so
+     * they are preferred over a guess; PATH falls back to the usual system
+     * directories when it is absent, which is where a toolchain that built this
+     * module has to be anyway.
+     */
+    const char* sysPath = std::getenv("SYSTEM_PATH");
+    std::string path = (sysPath && *sysPath) ? sysPath : "/usr/local/bin:/usr/bin:/bin";
+    // This is going into a single-quoted shell word. Nothing normal puts a
+    // quote in PATH; rather than escape it, fall back.
+    if (path.find('\'') != std::string::npos)
+        path = "/usr/local/bin:/usr/bin:/bin";
+
+    // Quoted because a Steam directory can contain spaces, and this string goes
+    // to a shell. Every path here is ours, not user input.
+    const std::string cmd =
+        "env -u LD_PRELOAD -u LD_LIBRARY_PATH PATH='" + path + "' " +
+        "python3 '" + gen.string() + "' '" + dllPath +
+        "' --install >/dev/null 2>&1";
+    LOG_INFO("PatternLoader: no pattern set for this {} build, regenerating",
+             component);
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        LOG_WARN("PatternLoader: generator exited {} for {}", rc, component);
+        return false;
+    }
+    return true;
+#else
+    (void)dllPath;
+    (void)component;
+    return false;
+#endif
+}
+
 } // namespace
 
 // ---- public API ----
@@ -201,6 +286,26 @@ bool Load(SFPlatform::DynamicLibrary::ModuleHandle module, const std::string& dl
         }
         LOG_WARN("PatternLoader: TOML for {} parsed empty ({})",
                  component, parseErr.empty() ? "no entries" : parseErr);
+    }
+
+    // Nothing published and nothing cached for this build. Generate it here
+    // before giving up, then go back through the same path: the second Fetch
+    // finds the file the generator just wrote in the cache directory.
+    if (RegenerateFor(dllPath, component)) {
+        RemoteToml::Result again = RemoteToml::Fetch({
+            kPatternChannel, component, dllPath,
+        });
+        if (again.ok) {
+            PatternMap map = ParsePatternString(again.body, nullptr);
+            if (!map.empty()) {
+                LOG_INFO("PatternLoader: generated {} patterns for {} on this "
+                         "machine", map.size(), component);
+                g_moduleMaps[module] = std::move(map);
+                return true;
+            }
+        }
+        LOG_WARN("PatternLoader: regenerated {} but still could not load it",
+                 component);
     }
 
     // Total failure — popup + disable module's hooks.
