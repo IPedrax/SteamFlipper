@@ -36,6 +36,19 @@ WANTED = {
         "CheckAppOwnership":    ("CheckAppOwnership",),
         "BuildDepotDependency": ("BuildDepotDependency",),
         "GetOrAddAppData":      ("GetOrAddAppData",),
+        # The two Hooks_NetPacket entry points. Without these the whole file is
+        # dead on Linux, which is why the Cloud.* RPCs never reached the save
+        # backend: Install() runs, resolves nothing, and attaches nothing.
+        #
+        # Both scopes are class-qualified here, unlike the bare names above.
+        # BBuildAndAsyncSendFrame has exactly one candidate in the binary.
+        # RecvPkt has six (CWebUITransport, CCMInterface, CRemoteClientManager,
+        # COpenSSLConnection, CHTTPClientConnection, CHTTPServer); only the CM
+        # interface carries the unified-message traffic the cloud drain reads,
+        # so the scope is pinned to it rather than matched loosely. A wrong
+        # address here corrupts network traffic instead of failing a lookup.
+        "BBuildAndAsyncSendFrame": ("CWebSocketConnection::BBuildAndAsyncSendFrame",),
+        "RecvPkt":                 ("CCMInterface::RecvPkt",),
     },
     "steamui": {
         # FillInAppOverview is deliberately NOT listed. The VProf scope resolves
