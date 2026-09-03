@@ -185,9 +185,15 @@
 
   function standAside() {
     if (hiddenView) return;
-    var views = document.querySelectorAll(".BrowserWrapper");
+    // The .Browser child, not the .BrowserWrapper around it. The wrapper also
+    // holds the address bar those pages draw above the content, and hiding the
+    // pair took that with it. It is also the element openPage hides, and two
+    // pieces of code writing display onto one node is how the view got stuck:
+    // openPage saved "none" as the value to restore, having been handed a node
+    // the menu had just hidden.
+    var views = document.querySelectorAll(".BrowserWrapper .Browser");
     for (var i = 0; i < views.length; i++) {
-      if (views[i].style.display === "none") continue;      // Steam already hid it
+      if (views[i].style.display === "none") continue;      // already hidden
       if (!views[i].getBoundingClientRect().height) continue;
       hiddenView = { el: views[i], display: views[i].style.display };
       views[i].style.display = "none";
@@ -205,9 +211,11 @@
     cancelClose();
     var m = document.getElementById(MENU_ID);
     if (m) m.remove();
-    // Not while one of our own pages is up: openPage hides these views itself,
-    // and putting one back here would paint the store over the page.
-    if (!currentPage) comeBack(); else hiddenView = null;
+    // Always, with no exception for one of our pages being open. Leaving it
+    // hidden was the other half of the stuck view: openPage hides the wrapper,
+    // so a .Browser left hidden underneath survives every restore and the page
+    // comes back blank.
+    comeBack();
     document.removeEventListener("mousedown", onOutside, true);
     document.removeEventListener("keydown", onEsc, true);
   }
