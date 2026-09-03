@@ -3873,14 +3873,21 @@
    * opens nothing or takes over the view the UI is sitting in.
    */
   /**
-   * Hand a URL to Steam's own browser.
+   * Open a URL in the system's default browser.
    *
-   * steam:// rather than window.open: the client resolves that itself and
-   * shows it in its own window, where window.open from this context either
-   * opens nothing or takes over the view the UI is sitting in.
+   * openurl_external, not openurl: the second hands it to Steam's own built-in
+   * browser, which is not where anyone wants a Discord invite or a login page
+   * to land. SteamClient.System.OpenInSystemBrowser would say it more directly
+   * but lives only in SharedJSContext, a different CEF target from the window
+   * this UI is injected into, so the protocol handler is the route that exists
+   * from here.
+   *
+   * Assigning location rather than window.open: from this context window.open
+   * either does nothing or replaces the view the UI is sitting in, and a
+   * steam:// assignment is intercepted by the client without navigating.
    */
   function openUrl(url) {
-    try { window.location.href = "steam://openurl/" + url; } catch (e) {}
+    try { window.location.href = "steam://openurl_external/" + url; } catch (e) {}
   }
 
   /** A clickable label. Same treatment wherever a link appears on these pages. */
