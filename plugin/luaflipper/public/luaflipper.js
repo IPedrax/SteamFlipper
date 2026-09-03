@@ -428,6 +428,19 @@
 
   function scheduleClose() {
     cancelClose();
+    // Nothing is closed on a timer while the popup is up. Leaving the tab is
+    // the same movement as arriving at the menu, and the only way to tell them
+    // apart is to hear from something after the fact -- either this window
+    // seeing the pointer somewhere else, or the popup saying it lost it. A
+    // timer cannot wait for that without also being the thing that closes the
+    // menu mid-aim, which is the bug this keeps coming back as.
+    //
+    // The cost is a menu that can linger after the pointer leaves across a
+    // browser view, where this window is told nothing at all. It goes on the
+    // next click, because Steam hides these windows on blur, and on the next
+    // movement anywhere this window can see. That is a better failure than one
+    // that shuts under the pointer.
+    if (popupMenuUp) return;
     closeTimer = setTimeout(closeMenu, 220);
   }
 
@@ -459,7 +472,7 @@
     var tab = document.getElementById(TAB_ID);
     if (tab && (ev.target === tab || tab.contains(ev.target))) return;
     if (inPopup(ev.clientX, ev.clientY)) { cancelClose(); return; }
-    closeMenu();
+    closeMenu();          // demonstrably elsewhere
   }, true);
 
   /* --------------------------------------------------------------- page --- */
