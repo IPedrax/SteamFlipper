@@ -16,6 +16,9 @@ Built for the **Linux Steam client** (Arch, Debian/Ubuntu, SteamOS, Fedora).
 |---|---|
 | **Ownership injection** | Apps and DLC from your Lua manifests are added to Steam's in-memory license data, so they show up owned in the library |
 | **Depot decryption** | Pushes the keys from your manifests into `config.vdf` so downloaded content actually decrypts |
+| **A tab inside Steam** | Find and add manifests, manage what you have, browse fixes and change settings without leaving the client. No Millennium, no separate app |
+| **Cloud saves** | Manifest-added apps get no Steam Cloud, because the account does not own them. SteamFlipper answers those requests itself, out of a folder on this machine |
+| **Self-calibrating** | Steam updates change every hook address. The module notices and re-derives them itself instead of going quiet |
 | **Live manifest reload** | Drop a `.lua` in while Steam is running and it gets picked up immediately |
 | **No `LD_PRELOAD`** | Loads through a `libXtst.so.6` proxy that only the Steam client resolves, so nothing is mapped into your games |
 | **Millennium-compatible** | Runs alongside Millennium without breaking `steamwebhelper`. Opt-in, off by default |
@@ -66,9 +69,47 @@ sudo dnf install @development-tools cmake ninja-build \
 
 ---
 
+## <img src="assets/icons/gauge.svg" width="20" align="absmiddle" alt="" /> The LUAFlipper tab
+
+After installing, Steam has one more tab next to your account name. Hover it for the menu; it borrows the client's own markup and class names, so a custom theme restyles it along with everything else.
+
+| Page | What it is |
+|---|---|
+| **Unlocker** | Steam's real store, opened as this tab. Prices render as a 100% discount and **Add to Cart** installs a manifest instead of adding to the cart. Leave the tab and the store is exactly as Valve shipped it |
+| **Manage** | Your manifests as a library grid. Hover a game for its key counts and to update or remove it. A removal is undoable until the next Steam start, and deleted then |
+| **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions and downloads the archive |
+| **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status |
+
+The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab — a navigation, a crashed script, closing it — puts the real store back within seconds. The Store tab is never touched.
+
+Turn the whole thing off with `[ui] enabled = false` in `steamflipper.toml`.
+
+> The store needs Steam's CEF debugger, which the installer enables by creating `<Steam>/.cef-enable-remote-debugging`. It listens on loopback only.
+
+### Cloud saves
+
+Apps added by a manifest are not on your account, so Valve answers their cloud uploads with *Access Denied* and those games end up with no cloud at all. SteamFlipper answers the `Cloud.*` requests itself and keeps the files under `<Steam>/steamflipper/cloudsaves`. Only apps with a manifest in `config/stplug-in` are answered; games you actually own keep using Valve's cloud and are never touched.
+
+Switch it on under **Config → Cloud saves**. It takes effect on the next Steam start.
+
+> Those saves live only on this machine. Nothing copies them anywhere else, so point a backup or sync client at that folder if they matter.
+
+### Downloading fixes
+
+The fix catalog is readable without an account. Downloading a fix is not: that endpoint wants a lua.tools bearer token, which is yours and has its own daily cap. Add it and restart Steam:
+
+```toml
+[fixes]
+token = "..."
+```
+
+Fixes are downloaded, never applied. They ship their own instructions — which files go where, what to disable first, what to undo afterwards — and those differ per release, so the archive lands in `<Steam>/steamflipper/fixes/` and applying it stays with whoever read them.
+
+---
+
 ## <img src="assets/icons/file.svg" width="20" align="absmiddle" alt="" /> Adding manifests by hand
 
-You do not need the LuaTools app. A manifest is a plain Lua file, and adding one takes three steps.
+The Unlocker tab does this for you, but nothing here depends on it. A manifest is a plain Lua file, and adding one by hand takes three steps.
 
 **1. Write the `.lua`** into `~/.local/share/Steam/config/stplug-in/`, named after the app id:
 
@@ -100,7 +141,7 @@ This is the step people miss. Ownership works from the `.lua` alone, but **conte
 
 **3. Start Steam.** The app shows up in your library.
 
-Adding a manifest **while Steam is running** works too. A file watcher picks it up for ownership right away. You still need step 2, with Steam closed, before its content will download.
+Adding a manifest **while Steam is running** works too. A file watcher registers the ownership right away. Whether the library *view* redraws without a restart depends on two addresses that are pinned per Steam build, so on an uncalibrated one the app is owned but the list still needs a restart to show it. You still need step 2, with Steam closed, before its content will download.
 
 > A `.lua` with no `addappid(id, 1, "<key>")` line carries no key at all for that depot. Nothing can decrypt it. That is a gap in the manifest, not a bug in the tool.
 
@@ -129,14 +170,18 @@ The installer also fixes the reason Millennium's **config page and frontend exte
 
 ## <img src="assets/icons/settings.svg" width="20" align="absmiddle" alt="" /> After a Steam update
 
-Hook addresses are byte offsets keyed by the SHA-256 of `steamclient.so`. A client update changes every one of them, and the pattern file stops matching **silently**. Steam runs normally and nothing unlocks.
+Nothing. Hook addresses are byte offsets keyed by the SHA-256 of `steamclient.so`, and a client update changes every one of them — but the module notices that the file it just hashed has no pattern set and re-derives them itself on that launch. The generator runs from a copy the installer leaves beside the module, outside the steam-runtime, whose `readelf` and pinned libraries would otherwise break it.
+
+This used to be the sharpest edge in the whole project: the pattern file stopped matching **silently**, Steam ran normally, and nothing unlocked. It was reported from a Steam Deck, where client updates land often enough that most installs live in the gap between an update and a published pattern set.
+
+If you ever want to force it by hand:
 
 ```bash
 steam -shutdown
 ./tools/install_linux.sh --no-build
 ```
 
-Most addresses cannot be re-derived automatically, so the generator refuses and the installer exits non-zero rather than telling you it worked.
+Everything ownership injection needs is derived from the binary, so an uncalibrated build still unlocks. A handful of extras — live library refresh among them — are pinned per build and stay off until someone publishes a set for it. The generator says which, and continues rather than refusing.
 
 ---
 

@@ -1,3 +1,8 @@
+> [!WARNING]
+> **此翻译来自 OpenSteamTool（Windows），内容已过时。**
+> SteamFlipper 仅适用于 Linux，下文均不描述本项目。
+> 最新文档请见 [README.md](README.md)。
+
 <div align="center">
   <h1>SteamFlipper — a Linux fork of OpenSteamTool</h1>
 
