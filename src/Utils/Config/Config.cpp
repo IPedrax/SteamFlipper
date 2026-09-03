@@ -21,6 +21,7 @@ namespace {
         bool updateEnabled = true;
         std::string updateRepo;
         std::string fixesToken;
+        std::string fixesRefreshToken;
         std::string hubcapKey;
         std::vector<std::string> sourceOrder;
         bool diagnosticsPopups = true;
@@ -64,6 +65,7 @@ namespace {
         updateEnabled          = snapshot.updateEnabled;
         updateRepo             = snapshot.updateRepo;
         fixesToken             = snapshot.fixesToken;
+        fixesRefreshToken      = snapshot.fixesRefreshToken;
         hubcapKey              = snapshot.hubcapKey;
         sourceOrder            = snapshot.sourceOrder;
         diagnosticsPopups      = snapshot.diagnosticsPopups;
@@ -182,6 +184,9 @@ namespace {
             if (auto fixes = tbl["fixes"].as_table()) {
                 if (auto val = (*fixes)["token"].value<std::string>()) {
                     snapshot.fixesToken = *val;
+                }
+                if (auto val = (*fixes)["refresh_token"].value<std::string>()) {
+                    snapshot.fixesRefreshToken = *val;
                 }
             }
 
@@ -339,6 +344,11 @@ namespace {
     std::string GetFixesToken() {
         std::lock_guard lock(g_mutex);
         return fixesToken;
+    }
+
+    std::string GetFixesRefreshToken() {
+        std::lock_guard lock(g_mutex);
+        return fixesRefreshToken;
     }
 
     std::string GetHubcapKey() {

@@ -54,6 +54,13 @@ namespace Config {
     // is never shipped or defaulted.
     std::string GetFixesToken();
 
+    // [fixes].refresh_token - the durable half of a lua.tools session. Their
+    // access tokens are minted per session and expire within the hour, so this
+    // is what survives a restart; the module trades it for an access token when
+    // a download needs one. Written by the sign-in on the Fixes page, and
+    // rotated on every exchange because Supabase issues a new one each time.
+    std::string GetFixesRefreshToken();
+
     // [hubcap].key - the user's own hubcapmanifest.com API key, "smm_" plus 96
     // hex. Hubcap is the one manifest source that takes no proxy: the key is
     // the user's, downloads count against their own daily limit, and nothing
@@ -110,6 +117,7 @@ namespace Config {
     // which the Fixes page reports rather than papering over: a download that
     // 401s is not a network problem and should not be described as one.
     inline std::string fixesToken;
+    inline std::string fixesRefreshToken;
 
     // [hubcap].key - see GetHubcapKey above. Empty means the Sadie (Hubcap)
     // source reports "needs key" rather than pretending to be unavailable.

@@ -1294,6 +1294,198 @@ namespace {
         }
     }
 
+    /* --------------------------------------------------------- lua.tools --- */
+
+    // Defined with the unlocker-mode lease further down; both want a clock that
+    // cannot be moved by the user changing the system time.
+    long long SteadyMs();
+
+    /*
+     * A lua.tools session, from a Discord code.
+     *
+     * Their catalog is public; downloading a fix is not. The credential behind
+     * it is a Supabase session, and the sign-in that suits a program with no
+     * browser is their Discord bot route: the user runs /login with the bot,
+     * gets a six-character code, and types it here. The code is the credential,
+     * single-use with a five-minute life, and it never was a password.
+     *
+     * Two exchanges turn it into a session, then the refresh token is the only
+     * thing worth keeping: access tokens expire within the hour, which is why
+     * pasting one into the config file was never going to work.
+     */
+    constexpr const char* kSupabase = "https://db.lua.tools";
+
+    // Public by design: it identifies the project to Supabase and grants
+    // nothing on its own. It ships in the lua.tools web bundle too.
+    constexpr const char* kSupabaseAnon =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NzYwMzkzNzYsImV4cCI6MTg5"
+        "MzQ1NjAwMCwicm9sZSI6ImFub24iLCJpc3MiOiJzdXBhYmFzZSJ9."
+        "f_-K38u3odjltP-g_67FVmG32Vg-_-k-lNBvIaVUVBM";
+
+    // Their edge refuses anything that does not look like a browser with a bare
+    // 403 and no body worth reading, so every call here carries one.
+    constexpr const wchar_t* kBrowserUA =
+        L"User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:154.0) "
+        L"Gecko/20100101 Firefox/154.0\r\n";
+
+    std::mutex g_sessionLock;
+    std::string g_accessToken;          // in memory only; expires
+    long long   g_accessExpires = 0;    // steady ms
+
+    SFPlatform::Http::Result PostJson(const std::string& url, const std::string& body,
+                                      const std::wstring& extraHeaders) {
+        const std::wstring headers =
+            std::wstring(L"Content-Type: application/json\r\n") + kBrowserUA + extraHeaders;
+        return SFPlatform::Http::Execute(L"POST", url.c_str(), body.data(),
+                                         static_cast<uint32_t>(body.size()),
+                                         headers.c_str(), 5000, 5000, 10000, 20000,
+                                         256u * 1024u);
+    }
+
+    /**
+     * Swap the stored refresh token for a usable access token.
+     *
+     * Cached until shortly before it expires, and the refresh token is rewritten
+     * every time because Supabase rotates it on each exchange: keeping the old
+     * one would sign the user out at the next restart.
+     */
+    std::string FixesAccessToken(std::string& err) {
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            if (!g_accessToken.empty() && g_accessExpires > SteadyMs() + 60000)
+                return g_accessToken;
+        }
+
+        const std::string refresh = Config::GetFixesRefreshToken();
+        if (refresh.empty()) {
+            // A token pasted in by hand still works, for as long as it lives.
+            const std::string manual = Config::GetFixesToken();
+            if (!manual.empty()) return manual;
+            err = "not signed in";
+            return {};
+        }
+
+        auto r = PostJson(std::string(kSupabase) + "/auth/v1/token?grant_type=refresh_token",
+                          "{\"refresh_token\":\"" + JsonEscape(refresh) + "\"}",
+                          std::wstring(L"apikey: ") +
+                          std::wstring(std::string(kSupabaseAnon).begin(),
+                                       std::string(kSupabaseAnon).end()) + L"\r\n");
+        if (!r.ok || r.status != 200) {
+            err = "the saved session was refused; sign in again";
+            return {};
+        }
+
+        const std::string access = JsonString(r.body, "access_token");
+        const std::string rotated = JsonString(r.body, "refresh_token");
+        if (access.empty()) { err = "no access token in the reply"; return {}; }
+
+        if (!rotated.empty() && rotated != refresh) {
+            std::string werr;
+            WriteConfigKey("fixes", "refresh_token", TomlString(rotated), werr);
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            g_accessToken = access;
+            const long long ttl = JsonNumber(r.body, "expires_in");
+            g_accessExpires = SteadyMs() + (ttl > 0 ? ttl : 3600) * 1000;
+        }
+        return access;
+    }
+
+    /** Redeem a Discord bot code into a session, and keep the durable half. */
+    std::string JsonFixesLogin(const std::string& fullPath) {
+        std::string code = QueryParam(fullPath, "code");
+        for (char& c : code) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if (code.size() < 4 || code.size() > 12 ||
+            code.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") != std::string::npos)
+            return "{\"error\":\"That does not look like a bot code. Run /login with "
+                   "their Discord bot and it replies with a short code.\"}";
+
+        // Step 1: the code becomes a magic-link token hash.
+        auto r = PostJson("https://lua.tools/api/auth/code/redeem",
+                          "{\"code\":\"" + JsonEscape(code) + "\"}", L"");
+        if (!r.ok) return "{\"error\":\"lua.tools is unreachable\"}";
+        if (r.status == 404 || r.status == 400)
+            return "{\"error\":\"That code is not valid.\"}";
+        if (r.status == 410)
+            return "{\"error\":\"That code has expired. They last five minutes; "
+                   "run /login again.\"}";
+        if (r.status != 200)
+            return "{\"error\":\"lua.tools refused the code (HTTP " +
+                   std::to_string(r.status) + ")\"}";
+
+        const std::string hash = JsonString(r.body, "token");
+        if (hash.empty()) return "{\"error\":\"no token in the reply\"}";
+
+        // Step 2: the hash becomes a real session.
+        const std::string anon(kSupabaseAnon);
+        auto v = PostJson(std::string(kSupabase) + "/auth/v1/verify",
+                          "{\"type\":\"magiclink\",\"token_hash\":\"" +
+                          JsonEscape(hash) + "\"}",
+                          std::wstring(L"apikey: ") +
+                          std::wstring(anon.begin(), anon.end()) + L"\r\n");
+        if (!v.ok || v.status != 200)
+            return "{\"error\":\"The code was accepted but the session was refused.\"}";
+
+        const std::string refresh = JsonString(v.body, "refresh_token");
+        const std::string access  = JsonString(v.body, "access_token");
+        if (refresh.empty()) return "{\"error\":\"no refresh token in the session\"}";
+
+        std::string werr;
+        if (!WriteConfigKey("fixes", "refresh_token", TomlString(refresh), werr))
+            return "{\"error\":\"Signed in, but the session could not be saved: " +
+                   JsonEscape(werr) + "\"}";
+
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            g_accessToken = access;
+            const long long ttl = JsonNumber(v.body, "expires_in");
+            g_accessExpires = SteadyMs() + (ttl > 0 ? ttl : 3600) * 1000;
+        }
+
+        const std::string email = JsonString(v.body, "email");
+        LOG_INFO("LuaFlipperUI: signed in to lua.tools");
+        return "{\"ok\":true,\"email\":\"" + JsonEscape(email) + "\"}";
+    }
+
+    std::string JsonFixesLogout() {
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            g_accessToken.clear();
+            g_accessExpires = 0;
+        }
+        std::string err;
+        WriteConfigKey("fixes", "refresh_token", TomlString(""), err);
+        LOG_INFO("LuaFlipperUI: signed out of lua.tools");
+        return "{\"ok\":true}";
+    }
+
+    /** Whether there is a session, and what it is worth today. */
+    std::string JsonFixesAccount() {
+        if (Config::GetFixesRefreshToken().empty() && Config::GetFixesToken().empty())
+            return "{\"signedIn\":false}";
+
+        std::string err;
+        const std::string access = FixesAccessToken(err);
+        if (access.empty())
+            return "{\"signedIn\":false,\"error\":\"" + JsonEscape(err) + "\"}";
+
+        // Supporter status is the cheapest call that proves the token works.
+        const std::wstring headers =
+            std::wstring(L"Authorization: Bearer ") +
+            std::wstring(access.begin(), access.end()) + L"\r\n" + kBrowserUA;
+        auto r = SFPlatform::Http::Execute(
+            L"GET", "https://lua.tools/api/me/supporter-status", nullptr, 0,
+            headers.c_str(), 5000, 5000, 10000, 15000, 64u * 1024u);
+        if (!r.ok || r.status != 200)
+            return "{\"signedIn\":false,\"error\":\"the session was refused; "
+                   "sign in again\"}";
+
+        return std::string("{\"signedIn\":true,\"supporter\":") +
+               (r.body.find("\"isSupporter\":true") != std::string::npos
+                ? "true" : "false") + ",\"limit\":25}";
+    }
+
     /* -------------------------------------------------------------- fixes --- */
 
     // LuaTools' fix catalog. Reading it needs no account: /denuvo/listings and
@@ -1392,57 +1584,78 @@ namespace {
      * token the service answers 401, which is reported as the missing setting
      * it is rather than as a network failure.
      */
-    std::string JsonFixDownload(const std::string& fixId, const std::string& name) {
+    std::string JsonFixDownload(const std::string& fixId, const std::string& name,
+                                const std::string& slot) {
         if (fixId.empty()) return "{\"error\":\"no fix id\"}";
+        const std::string want = (slot == "manifest") ? "manifest" : "fix";
 
-        const std::string token = Config::GetFixesToken();
-        if (token.empty()) {
-            return "{\"error\":\"No lua.tools token configured. The catalog is "
-                   "readable without one, but downloading a fix is not. Put "
-                   "your own token in steamflipper.toml as [fixes] token = "
-                   "\\\"...\\\" and restart Steam.\",\"needsToken\":true}";
+        std::string err;
+        const std::string access = FixesAccessToken(err);
+        if (access.empty()) {
+            return "{\"error\":\"Not signed in to lua.tools. The catalog is free; "
+                   "downloading a fix is not. Sign in on the Fixes page with a code "
+                   "from their Discord bot.\",\"needsLogin\":true}";
         }
 
-        const std::wstring headers =
-            L"Authorization: Bearer " +
-            std::wstring(token.begin(), token.end()) + L"\r\n";
-        auto r = SFPlatform::Http::Execute(L"GET",
-            (std::string(kFixBase) + "/download?fix=" + fixId).c_str(), nullptr, 0,
-            headers.c_str(), 5000, 5000, 10000, 120000, 512u * 1024u * 1024u);
+        const std::wstring auth =
+            std::wstring(L"Authorization: Bearer ") +
+            std::wstring(access.begin(), access.end()) + L"\r\n" + kBrowserUA;
 
+        /*
+         * Two requests, not one.
+         *
+         * The endpoint does not serve the archive; it answers {"url": "..."}
+         * with a short-lived signed R2 link, and the file comes from there with
+         * no auth header of its own. Writing the first reply straight to disk
+         * produced a zip containing a line of JSON, which is what this used to
+         * do. The slot matters too: "fix" is the game archive and "manifest" is
+         * the version-pinned lua, and asking for neither got the default.
+         */
+        const std::string api = std::string(kFixBase) + "/download?fix=" + fixId +
+                                "&slot=" + want;
+        auto r = SFPlatform::Http::Execute(L"GET", api.c_str(), nullptr, 0,
+                                           auth.c_str(), 5000, 5000, 10000, 30000,
+                                           256u * 1024u);
         if (r.ok && (r.status == 401 || r.status == 403))
-            return "{\"error\":\"lua.tools rejected the token. It may be expired, "
-                   "or the daily cap on this account may be spent.\","
-                   "\"needsToken\":true}";
-        if (!r.ok || r.status != 200 || r.body.empty())
-            return "{\"error\":\"The fix could not be downloaded\"}";
+            return "{\"error\":\"lua.tools refused the session. Sign in again.\","
+                   "\"needsLogin\":true}";
+        if (r.ok && r.status == 429)
+            return "{\"error\":\"The daily download limit for this account is "
+                   "spent. It is 25 a day, shared with manifest downloads.\"}";
+        if (!r.ok || r.status != 200)
+            return "{\"error\":\"The fix could not be requested\"}";
 
-        // Under the module's own folder, not the game's: nothing here knows
-        // which of the user's library roots holds the install, and writing into
-        // a game directory on a guess is not a thing to do to files a download
-        // cannot replace.
+        const std::string signed_ = JsonString(r.body, "url");
+        if (signed_.empty())
+            return "{\"error\":\"No download link came back\"}";
+
+        // The link carries its own credentials, so this one goes out bare.
+        auto f = SFPlatform::Http::Execute(L"GET", signed_.c_str(), nullptr, 0,
+                                           kBrowserUA, 5000, 5000, 10000, 180000,
+                                           512u * 1024u * 1024u);
+        if (!f.ok || f.status != 200 || f.body.empty())
+            return "{\"error\":\"The signed link did not serve the file\"}";
+
         std::error_code ec;
         const std::filesystem::path dir =
             std::filesystem::path(g_steamPath) / "steamflipper" / "fixes";
         std::filesystem::create_directories(dir, ec);
 
-        // The service names the file; anything with a separator in it is a name
-        // that would write outside this folder, so it is replaced rather than
-        // trusted.
         std::string file = name.empty() ? (fixId + ".zip") : name;
         if (file.find('/') != std::string::npos ||
             file.find('\\') != std::string::npos || file == "..")
             file = fixId + ".zip";
 
         const std::filesystem::path out = dir / file;
-        std::ofstream f(out, std::ios::binary);
-        if (!f) return "{\"error\":\"Could not write to " +
+        std::ofstream o(out, std::ios::binary);
+        if (!o) return "{\"error\":\"Could not write to " +
                        JsonEscape(dir.string()) + "\"}";
-        f.write(r.body.data(), static_cast<std::streamsize>(r.body.size()));
-        f.close();
+        o.write(f.body.data(), static_cast<std::streamsize>(f.body.size()));
+        o.close();
 
+        LOG_INFO("LuaFlipperUI: fix {} saved ({} bytes)", file, f.body.size());
         return "{\"ok\":true,\"path\":\"" + JsonEscape(out.string()) +
-               "\",\"bytes\":" + std::to_string(r.body.size()) + "}";
+               "\",\"bytes\":" + std::to_string(f.body.size()) + "}";
     }
 
     /**
@@ -1904,6 +2117,10 @@ namespace {
         if (path == "/api/hubcap/save")  return JsonHubcapSave(fullPath);
         if (path == "/api/sources/order") return JsonSourcesSave(fullPath);
 
+        if (path == "/api/fixes/login")   return JsonFixesLogin(fullPath);
+        if (path == "/api/fixes/logout")  return JsonFixesLogout();
+        if (path == "/api/fixes/account") return JsonFixesAccount();
+
         if (path == "/api/fixes/catalog") return JsonFixCatalog();
         if (path == "/api/fixes/list") {
             const std::string id = QueryParam(fullPath, "appid");
@@ -1912,7 +2129,8 @@ namespace {
         }
         if (path == "/api/fixes/download") {
             return JsonFixDownload(QueryParam(fullPath, "fix"),
-                                   QueryParam(fullPath, "name"));
+                                   QueryParam(fullPath, "name"),
+                                   QueryParam(fullPath, "slot"));
         }
         if (path == "/api/cloud")        return JsonCloud();
         if (path == "/api/cloud/enable")  return JsonCloudEnable();

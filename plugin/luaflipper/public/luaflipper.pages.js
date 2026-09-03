@@ -163,6 +163,109 @@
     page.appendChild(gridView);
     page.appendChild(gameView);
 
+    /* -------------------------------------------------------- account --- */
+
+    /*
+     * Signing in, without a browser or a password.
+     *
+     * lua.tools authenticates through Supabase, and the route that suits a
+     * program with no browser is their Discord bot: /login there replies with a
+     * short code, and the code is the credential. It is single-use and lives
+     * five minutes, so it is not a secret worth storing, and the module keeps
+     * only the refresh token it becomes.
+     *
+     * Here rather than in Config because this is the page where the thing it
+     * unlocks lives, and the reason to sign in is the download button two
+     * clicks away.
+     */
+    var account = style(el("div"), {
+      display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px",
+      padding: "10px 12px", borderRadius: "3px", background: "rgba(0,0,0,0.2)"
+    });
+    gridView.appendChild(account);
+
+    function drawAccount(st) {
+      account.innerHTML = "";
+      var signedIn = !!(st && st.signedIn);
+
+      account.appendChild(style(el("div", null,
+        signedIn ? "Signed in to lua.tools" : "Not signed in to lua.tools"), {
+        fontSize: "13px", fontWeight: "bold",
+        color: signedIn ? "#a4d007" : SET.label, flex: "0 0 auto"
+      }));
+
+      account.appendChild(style(el("div", null, signedIn
+        ? (st.supporter ? "Supporter: downloads are unlimited."
+                        : "Downloads count against 25 a day, shared with manifests.")
+        : "The catalog above is free. Downloading a fix needs an account."), {
+        fontSize: "12px", color: SET.desc, flex: "1 1 auto", minWidth: "0"
+      }));
+
+      if (signedIn) {
+        var out = dialogBtn(el, "Sign out");
+        account.appendChild(out);
+        out.addEventListener("click", function () {
+          out.busyLook(true);
+          fetch(API + "fixes/logout").then(function (r) { return r.json(); })
+            .then(function () { drawAccount({ signedIn: false }); })
+            .catch(function () { out.busyLook(false); });
+        });
+        return;
+      }
+
+      var code = el("input", "luaflipper-input");
+      code.type = "text";
+      code.placeholder = "code from /login";
+      code.maxLength = 12;
+      style(code, {
+        border: "0", borderRadius: "2px", background: "rgba(0,0,0,0.35)",
+        padding: "0 10px", height: "28px", width: "150px", fontSize: "13px",
+        textTransform: "uppercase", flex: "0 0 auto"
+      });
+      account.appendChild(code);
+
+      var go = dialogBtn(el, "Sign in");
+      account.appendChild(go);
+
+      var said = style(el("div"), {
+        flex: "0 0 auto", fontSize: "12px", color: "#e7a94a", maxWidth: "42%"
+      });
+      account.appendChild(said);
+
+      account.appendChild(link(el, "Get a code",
+        "https://discord.gg/luatools"));
+
+      go.addEventListener("click", function () {
+        var v = (code.value || "").trim();
+        if (!v) { said.textContent = "Run /login with their Discord bot first."; return; }
+        go.busyLook(true);
+        go.textContent = "Signing in";
+        fetch(API + "fixes/login?code=" + encodeURIComponent(v))
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            go.busyLook(false);
+            go.textContent = "Sign in";
+            if (!res || res.error) {
+              said.textContent = text(res && res.error) || "Sign-in failed.";
+              return;
+            }
+            // Re-read rather than assume: the only question worth answering is
+            // what the session is actually worth, and that is not local.
+            fetch(API + "fixes/account").then(function (r) { return r.json(); })
+              .then(drawAccount).catch(function () { drawAccount({ signedIn: true }); });
+          })
+          .catch(function (e) {
+            go.busyLook(false);
+            go.textContent = "Sign in";
+            said.textContent = "Could not reach SteamFlipper: " + why(e);
+          });
+      });
+    }
+
+    drawAccount(null);
+    fetch(API + "fixes/account").then(function (r) { return r.json(); })
+      .then(drawAccount).catch(skip);
+
     gridView.appendChild(style(el("div", "luaflipper-sub",
       list.length + " of " + plural(num(data.installed), "installed manifest") +
       " have a published fix, out of " + num(data.scanned) +
@@ -300,13 +403,14 @@
         get.textContent = "Downloading";
         said.textContent = "";
         fetch(API + "fixes/download?fix=" + encodeURIComponent(text(fix.id)) +
-              "&name=" + encodeURIComponent(text(fix.fixFilename)))
+              "&slot=fix&name=" + encodeURIComponent(text(fix.fixFilename)))
           .then(function (r) { return r.json(); })
           .then(function (res) {
             get.busyLook(false);
             if (!res || typeof res !== "object") throw new Error("unreadable reply");
             if (res.error) {
-              get.textContent = res.needsToken ? "Download fix" : "Try again";
+              get.textContent = (res.needsToken || res.needsLogin)
+                ? "Download fix" : "Try again";
               said.textContent = text(res.error);
               said.style.color = "#e7a94a";
               return;
