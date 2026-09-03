@@ -199,8 +199,25 @@
     for (var i = 0; i < views.length; i++) {
       if (views[i].style.display === "none") continue;      // Steam already hid it
       if (!views[i].getBoundingClientRect().height) continue;
-      hiddenView = { el: views[i], margin: views[i].style.marginTop };
+      // The strip the page vacates is painted by an ancestor that is plain
+      // black, so an offset alone reads as a black bar across the window. The
+      // address bar directly above it is the right neighbour to borrow from:
+      // it is the chrome this strip is visually part of, and reading its
+      // computed colour rather than naming one keeps a theme authoritative.
+      var wrap = views[i].parentElement;
+      var bar = wrap ? wrap.querySelector(".URLBar") : null;
+      var paint = bar ? window.getComputedStyle(bar).backgroundColor : "";
+      if (!paint || paint === "rgba(0, 0, 0, 0)" || paint === "transparent") {
+        paint = "";                       // leave it alone rather than guess
+      }
+
+      hiddenView = {
+        el: views[i], margin: views[i].style.marginTop,
+        wrap: paint ? wrap : null,
+        wrapBg: wrap ? wrap.style.background : ""
+      };
       views[i].style.marginTop = px + "px";
+      if (paint) wrap.style.background = paint;
       return;
     }
   }
@@ -208,6 +225,7 @@
   function comeBack() {
     if (!hiddenView) return;
     hiddenView.el.style.marginTop = hiddenView.margin;
+    if (hiddenView.wrap) hiddenView.wrap.style.background = hiddenView.wrapBg;
     hiddenView = null;
   }
 
