@@ -184,7 +184,7 @@
      * It is shown whole and unstyled rather than summarised, because a fix
      * applied from a summary is a broken install.
      */
-    function openFix(fix, appId) {
+    function openFix(fix, appId, game) {
       var back = style(el("div"), {
         position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
         background: "rgba(0,0,0,0.65)", zIndex: "9000",
@@ -266,6 +266,29 @@
         userSelect: "text", webkitUserSelect: "text"
       });
       foot.appendChild(said);
+
+      /*
+       * Straight to whoever made it.
+       *
+       * lua.tools mirrors rather than authors: 1630 of the 1769 games in its
+       * catalog are tagged Online Fix, and its own file host is a private R2
+       * bucket that answers "not authorized to view this bucket" to everything
+       * outside its app. So the origin is worth reaching directly, and the
+       * only honest way to point at it is a search for the name.
+       *
+       * Deliberately a search and not a resolved link. Their pages are keyed by
+       * their own post id and slug, with no Steam appid anywhere, and matching
+       * by title does not survive contact with sequels: tested against the open
+       * Hydra catalogue, "Borderlands 4" matched Borderlands 3 and
+       * "Subnautica 2" matched Subnautica, because the digit that makes a
+       * sequel is the same digit that makes a version. A link that quietly
+       * opens the wrong game is worse than one more click.
+       */
+      var origin = link(el, "Find on online-fix.me",
+        "https://online-fix.me/index.php?do=search&subaction=search&story=" +
+        encodeURIComponent(text(game && game.name) || ""));
+      style(origin, { fontSize: "12px", marginRight: "4px" });
+      foot.appendChild(origin);
 
       var get = dialogBtn(el, fix.hasFix ? "Download fix" : "No archive");
       if (!fix.hasFix) get.busyLook(true);
@@ -430,7 +453,7 @@
       var loaded = null;
 
       fixBtn.addEventListener("click", function () {
-        if (loaded && loaded.length) openFix(loaded[0], appId);
+        if (loaded && loaded.length) openFix(loaded[0], appId, game);
       });
 
       fetch(API + "fixes/list?appid=" + encodeURIComponent(text(game.appid)))
@@ -470,7 +493,7 @@
             // 60px target does anything is a list that feels broken.
             var host = right.parentNode;
             host.style.cursor = "pointer";
-            host.addEventListener("click", function () { openFix(f, appId); });
+            host.addEventListener("click", function () { openFix(f, appId, game); });
           });
         })
         .catch(function (e) {
