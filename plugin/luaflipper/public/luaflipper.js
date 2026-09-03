@@ -161,10 +161,53 @@
 
   /* ----------------------------------------------------------- dropdown --- */
 
+  /**
+   * Get the web view out from under the menu, and put it back.
+   *
+   * Store, Community and the profile are not HTML in this window: Steam renders
+   * them in a browser view, a native surface composited over the page. It wins
+   * against any DOM regardless of z-index, and the dropdown is already at
+   * 100000 and position:fixed, so the menu was drawing correctly and being
+   * painted over. Steam has the same problem with its own nav menus and solves
+   * it by making each one a separate popup window; that machinery lives in
+   * SharedJSContext, a different CEF target, and is not reachable from a script
+   * injected here.
+   *
+   * So the view stands aside while the menu is open. The page under it blanks
+   * to Steam's own background for as long as the pointer is on the menu, which
+   * is the moment someone is leaving that page anyway.
+   *
+   * The previous inline value is restored rather than cleared, for the reason
+   * hideStock has to: Steam drives these views by writing display straight onto
+   * them, and blanking that un-hides whichever one it had hidden.
+   */
+  var hiddenView = null;
+
+  function standAside() {
+    if (hiddenView) return;
+    var views = document.querySelectorAll(".BrowserWrapper");
+    for (var i = 0; i < views.length; i++) {
+      if (views[i].style.display === "none") continue;      // Steam already hid it
+      if (!views[i].getBoundingClientRect().height) continue;
+      hiddenView = { el: views[i], display: views[i].style.display };
+      views[i].style.display = "none";
+      return;
+    }
+  }
+
+  function comeBack() {
+    if (!hiddenView) return;
+    hiddenView.el.style.display = hiddenView.display;
+    hiddenView = null;
+  }
+
   function closeMenu() {
     cancelClose();
     var m = document.getElementById(MENU_ID);
     if (m) m.remove();
+    // Not while one of our own pages is up: openPage hides these views itself,
+    // and putting one back here would paint the store over the page.
+    if (!currentPage) comeBack(); else hiddenView = null;
     document.removeEventListener("mousedown", onOutside, true);
     document.removeEventListener("keydown", onEsc, true);
   }
@@ -218,6 +261,7 @@
     // we are about to open.
     cancelClose();
     if (document.getElementById(MENU_ID)) return;
+    standAside();
 
     // Wear Steam's own classes when the injector could supply them (see
     // steamMenuClasses). The readable aliases carry no styling of their own -
