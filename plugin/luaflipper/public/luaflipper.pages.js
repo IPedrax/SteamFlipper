@@ -3231,9 +3231,14 @@
       fontSize: "14px", fontWeight: "300", color: SET.label, lineHeight: "18px"
     }));
     if (desc) {
-      left.appendChild(style(el("div", null, desc), {
+      // A node as well as a string, so a description can carry a link without
+      // every caller rebuilding this row.
+      var d = style(el("div"), {
         fontSize: "13px", color: SET.desc, lineHeight: "18px", marginTop: "4px"
-      }));
+      });
+      if (typeof desc === "string") d.textContent = desc;
+      else d.appendChild(desc);
+      left.appendChild(d);
     }
     r.appendChild(left);
 
@@ -3634,13 +3639,30 @@
     var order = arr(data && data.order);
     if (!order.length) order = ["Ryuu", "Sushi", "Sadie (Hubcap)"];
 
-    var about = {
-      "Ryuu": "No account needed. Plain HTTP to a bare IP, so the archive is " +
-              "only as trustworthy as the network path to it.",
-      "Sushi": "No account needed. Served from a GitHub repository.",
-      "Sadie (Hubcap)": "Your own hubcapmanifest.com account. Downloads count " +
-              "against this key's daily limit, not a shared one."
-    };
+    // Each source's own Discord, the same ones LuaTools lists, because "where
+    // do I get a key" and "who do I ask when a source is down" have no other
+    // answer and retyping an invite code off a settings page is a poor one.
+    function about(name) {
+      if (name === "Ryuu") {
+        return sentence(el, [
+          "No account needed. Plain HTTP to a bare IP, so the archive is only " +
+          "as trustworthy as the network path to it.  ",
+          ["Discord", "https://discord.gg/manifests"]]);
+      }
+      if (name === "Sushi") {
+        return sentence(el, [
+          "No account needed. Served from a GitHub repository.  ",
+          ["Discord", "https://discord.gg/hMdv5dQhcN"]]);
+      }
+      if (name === "Sadie (Hubcap)") {
+        return sentence(el, [
+          "Your own account on ",
+          ["hubcapmanifest.com", "https://hubcapmanifest.com"],
+          ". Downloads count against this key's daily limit, not a shared one.  ",
+          ["Discord", "https://discord.gg/hubcapsmanifest"]]);
+      }
+      return "A manifest source.";
+    }
 
     var listHost = el("div");
     pane.appendChild(listHost);
@@ -3686,8 +3708,7 @@
 
       order.forEach(function (name, i) {
         var hub = name === "Sadie (Hubcap)";
-        var right = field(el, g, (i + 1) + ".  " + name,
-          about[name] || "A manifest source.",
+        var right = field(el, g, (i + 1) + ".  " + name, about(name),
           hub ? hubcapState(data) : style(el("div", null, "no account needed"), {
             fontSize: "13px", color: SET.desc
           }));
@@ -3744,9 +3765,10 @@
     });
 
     var save = dialogBtn(el, "Save");
-    var right = field(el, g2, "API key",
-      "Kept in steamflipper.toml, read at startup, and sent only to " +
-      "hubcapmanifest.com. Save an empty field to remove it.", input);
+    var right = field(el, g2, "API key", sentence(el, [
+      "Kept in steamflipper.toml, read at startup, and sent only to ",
+      ["hubcapmanifest.com", "https://hubcapmanifest.com"],
+      ". Save an empty field to remove it."]), input);
     right.appendChild(save);
 
     save.addEventListener("click", function () {
@@ -3799,10 +3821,11 @@
             text(data.expires).substring(0, 10));
     }
 
-    pane.appendChild(style(el("div", null,
-      "Hubcap is a separate account. Get a key from their Discord, paste it " +
-      "above and save; nothing else needs a restart."), {
-      fontSize: "13px", color: SET.desc, marginTop: "4px"
+    pane.appendChild(style(sentence(el, [
+      "Hubcap is a separate account. Get a key from ",
+      ["their Discord", "https://discord.gg/hubcapsmanifest"],
+      ", paste it above and save; nothing else needs a restart."]), {
+      display: "block", fontSize: "13px", color: SET.desc, marginTop: "4px"
     }));
   }
 
@@ -3849,6 +3872,48 @@
    * it in its own browser window, where window.open from this context either
    * opens nothing or takes over the view the UI is sitting in.
    */
+  /**
+   * Hand a URL to Steam's own browser.
+   *
+   * steam:// rather than window.open: the client resolves that itself and
+   * shows it in its own window, where window.open from this context either
+   * opens nothing or takes over the view the UI is sitting in.
+   */
+  function openUrl(url) {
+    try { window.location.href = "steam://openurl/" + url; } catch (e) {}
+  }
+
+  /** A clickable label. Same treatment wherever a link appears on these pages. */
+  function link(el, label, url) {
+    var a = style(el("span", null, label), {
+      color: LINK_TEXT, cursor: "pointer",
+      textDecoration: "underline", textDecorationColor: "rgba(102,192,244,0.4)"
+    });
+    a.title = "Open " + url;
+    a.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      openUrl(url);
+    });
+    return a;
+  }
+
+  /**
+   * A sentence with links in it.
+   *
+   * `parts` alternates plain strings and [label, url] pairs, which is enough
+   * for a description line and stops short of an HTML parser: nothing here
+   * should be building markup out of text.
+   */
+  function sentence(el, parts) {
+    var box = el("span");
+    parts.forEach(function (part) {
+      box.appendChild(typeof part === "string"
+        ? document.createTextNode(part)
+        : link(el, part[0], part[1]));
+    });
+    return box;
+  }
+
   function linkify(el, value) {
     var url = /^https?:\/\//.test(value) ? value
             : (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(value) ? "http://" + value : "");
@@ -3859,9 +3924,7 @@
       textDecoration: "underline", textDecorationColor: "rgba(102,192,244,0.4)"
     });
     a.title = "Open " + url;
-    a.addEventListener("click", function () {
-      try { window.location.href = "steam://openurl/" + url; } catch (e) {}
-    });
+    a.addEventListener("click", function () { openUrl(url); });
     return a;
   }
 
