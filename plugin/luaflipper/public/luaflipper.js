@@ -145,8 +145,11 @@
     nav.container.appendChild(tab);
 
     // Navigating away via a stock nav button must restore Steam's own content,
-    // exactly as switching between Store and Library does.
+    // exactly as switching between Store and Library does. Except when the
+    // click is ours: opening the Unlocker means clicking Store on the user's
+    // behalf, and that lands here looking exactly like leaving.
     nav.container.addEventListener("click", function (ev) {
+      if (selfNav) return;
       if (ev.target !== tab && !tab.contains(ev.target)) closePage();
     }, true);
 
@@ -349,6 +352,25 @@
     tab.className = tabBase(tab) + " " + classes.join(" ");
   }
 
+  /**
+   * Whether our tab is the one currently lit.
+   *
+   * This is what "the store is showing as the Unlocker tab" actually means, so
+   * it is what the mode lease is renewed against. Checked on the live element,
+   * not on a remembered flag: React re-renders the nav and the observer rebuilds
+   * the tab, and if either ever left us un-highlighted the user is looking at
+   * the real store and the lease has to lapse.
+   */
+  function hasHighlight() {
+    var tab = document.getElementById(TAB_ID);
+    if (!tab) return false;
+    var classes = selectedClasses();
+    for (var i = 0; i < classes.length; i++) {
+      if (!tab.classList.contains(classes[i])) return false;
+    }
+    return classes.length > 0;
+  }
+
   /** Put the highlight back where Steam had it. */
   function releaseHighlight() {
     var tab = document.getElementById(TAB_ID);
@@ -364,11 +386,58 @@
     return document.querySelector(".LocalContentContainer");
   }
 
+  /**
+   * Tell the module whether the store is being shown as our tab.
+   *
+   * Fire and forget with an optional continuation: the click that follows must
+   * not wait on the network, or the store would navigate before the flag lands
+   * and the first paint would show real prices.
+   */
+  function setUnlockerMode(on, then) {
+    var done = false;
+    function go() { if (!done) { done = true; if (then) then(); } }
+    try {
+      fetch(API + "unlocker/mode?set=" + (on ? "1" : "0"))
+        .then(go).catch(go);
+    } catch (e) { go(); }
+    // Never let a stalled request strand the navigation.
+    setTimeout(go, 400);
+  }
+
+  /**
+   * Hold the mode open for as long as the store is genuinely our tab.
+   *
+   * The module treats the flag as a lease that expires, so the claim has to be
+   * renewed. That is the point: it means the only thing keeping the store
+   * rewritten is this tab still being the open one. Anything that ends the tab
+   * without a clean close, a nav we did not see, a re-render that loses us, this
+   * script going away, stops the renewals and the real store comes back by
+   * itself instead of staying hooked.
+   */
+  var holdTimer = null;
+
+  // Set while we drive a stock nav button ourselves, so the listener that
+  // watches for the user leaving does not mistake our own click for theirs.
+  var selfNav = false;
+
+  function holdUnlockerMode(on) {
+    if (holdTimer) { clearInterval(holdTimer); holdTimer = null; }
+    if (!on) { setUnlockerMode(false, null); return; }
+    holdTimer = setInterval(function () {
+      // Renew only while we are still the open tab and still highlighted; if
+      // Steam moved the highlight elsewhere, the user is on the real store.
+      if (currentPage === "unlocker" && hasHighlight()) setUnlockerMode(true, null);
+      else holdUnlockerMode(false);
+    }, 2000);
+  }
+
   function closePage() {
     var p = document.getElementById(PAGE_ID);
     if (p) p.remove();
     var stock = stockContent();
     if (stock) stock.style.display = "";
+    // Leaving our tab must put the store back, whether or not it was ours.
+    if (currentPage === "unlocker") holdUnlockerMode(false);
     currentPage = null;
     releaseHighlight();
   }
@@ -384,6 +453,35 @@
     if (!frame) { log("ContentFrame not found; cannot open page"); return; }
 
     closePage();
+
+    // Unlocker is Steam's own store, not a page of ours. Flip the shared mode
+    // flag, then click the stock Store button so the client does its normal
+    // navigation: reimplementing that routing would mean owning a browser view
+    // and a history stack we have no reason to own. The store target's script
+    // reads the flag and presents prices as free with Add to Cart rerouted.
+    if (page === "unlocker") {
+      currentPage = page;
+      takeHighlight();          // keep our tab lit, not Store's
+      setUnlockerMode(true, function () {
+        var b = document.querySelectorAll(".SuperNavBar .MenuButton");
+        selfNav = true;
+        try {
+          for (var i = 0; i < b.length; i++) {
+            if (b[i].textContent.trim().toLowerCase() === "store") { b[i].click(); break; }
+          }
+        } finally {
+          selfNav = false;
+        }
+        // Steam moves the highlight to Store as it routes, so take it back once
+        // that has settled.
+        setTimeout(function () {
+          if (currentPage === "unlocker") takeHighlight();
+        }, 150);
+      });
+      holdUnlockerMode(true);
+      return;
+    }
+
     if (stock) stock.style.display = "none";
     currentPage = page;
     takeHighlight();

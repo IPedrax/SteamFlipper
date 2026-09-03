@@ -11,13 +11,18 @@
 #include "Utils/Logging/Log.h"
 #include "Utils/Update/AppUpdater.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -103,6 +108,16 @@ namespace {
         return out;
     }
 
+    // Numeric field, same scope as JsonString. -1 when absent.
+    long long JsonNumber(const std::string& doc, const std::string& key, size_t from = 0) {
+        const std::string needle = "\"" + key + "\"";
+        size_t k = doc.find(needle, from);
+        if (k == std::string::npos) return -1;
+        size_t c = doc.find(':', k + needle.size());
+        if (c == std::string::npos) return -1;
+        return strtoll(doc.c_str() + c + 1, nullptr, 10);
+    }
+
     int ConnectLoopback(uint16_t port) {
         int fd = ::socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0) return -1;
@@ -178,6 +193,10 @@ namespace {
         int fd = -1;
         std::string rest;
         int nextId = 0;
+        // Recv() returns empty both when the read timed out and when the peer
+        // went away. A long-lived session has to tell those apart: one means
+        // "nothing happened", the other means the target is gone.
+        bool closed = false;
 
         bool Open(const std::string& url) {
             // ws://127.0.0.1:8080/devtools/page/<id>
@@ -243,15 +262,27 @@ namespace {
             return SendAll(fd, frame.data(), frame.size());
         }
 
-        bool Call(const std::string& method, const std::string& paramsJson) {
+        // Send a command without waiting for anything. Used where the reply is
+        // not wanted and draining one frame would swallow an event instead.
+        bool Post(const std::string& method, const std::string& paramsJson) {
             std::string msg = "{\"id\":" + std::to_string(++nextId) +
                               ",\"method\":\"" + method + "\"";
             if (!paramsJson.empty()) msg += ",\"params\":" + paramsJson;
             msg += "}";
-            if (!Send(msg)) return false;
+            return Send(msg);
+        }
+
+        bool Call(const std::string& method, const std::string& paramsJson) {
+            if (!Post(method, paramsJson)) return false;
             // Drain one frame so replies do not pile up in the socket buffer.
             Recv();
             return true;
+        }
+
+        void SetRecvTimeout(int seconds) {
+            timeval tv{};
+            tv.tv_sec = seconds;
+            ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         }
 
         std::string Recv() {
@@ -259,7 +290,14 @@ namespace {
                 char buf[8192];
                 while (rest.size() < n) {
                     ssize_t r = ::recv(fd, buf, sizeof(buf), 0);
-                    if (r <= 0) return false;
+                    if (r == 0) { closed = true; return false; }
+                    if (r < 0) {
+                        // A timeout leaves whatever arrived in `rest`, so the
+                        // next call resumes the same frame rather than losing it.
+                        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+                            closed = true;
+                        return false;
+                    }
                     rest.append(buf, static_cast<size_t>(r));
                 }
                 return true;
@@ -319,6 +357,31 @@ namespace {
         // The value is itself a JSON document, delivered as a string.
         std::string v = JsonString(reply, "value");
         return v.find("menu") == std::string::npos ? std::string() : v;
+    }
+
+    /**
+     * Every debuggable target currently showing a Steam store page.
+     *
+     * The client renders the store by pointing one of its browser views at
+     * store.steampowered.com, so the store is a target of its own rather than a
+     * route inside the main window's React app. Big Picture does the same with a
+     * different view, which is why this matches on the URL and not on a title:
+     * one rule covers both, and covers however many views exist at once.
+     *
+     * Entries are emitted with `url` ahead of `webSocketDebuggerUrl`, so the
+     * first debugger URL after a matching page URL belongs to that entry.
+     */
+    std::vector<std::string> StoreTargets(const std::string& listJson) {
+        std::vector<std::string> out;
+        const std::string key = "\"url\":";
+        for (size_t at = listJson.find(key); at != std::string::npos;
+             at = listJson.find(key, at + key.size())) {
+            const std::string url = JsonString(listJson, "url", at);
+            if (url.find("://store.steampowered.com") == std::string::npos) continue;
+            const std::string ws = JsonString(listJson, "webSocketDebuggerUrl", at);
+            if (!ws.empty()) out.push_back(ws);
+        }
+        return out;
     }
 
     bool InjectInto(const std::string& wsUrl, const std::string& bootstrap) {
@@ -917,7 +980,15 @@ namespace {
         }
         j += ",\"remote\":\"" + JsonEscape(s.remote) + "\"";
         j += ",\"message\":\"" + JsonEscape(s.message) + "\"";
-        j += ",\"behind\":" + std::string(s.behind ? "true" : "false") + "}";
+        j += ",\"version\":\"" + JsonEscape(s.version) + "\"";
+        j += ",\"remote_version\":\"" + JsonEscape(s.remoteVersion) + "\"";
+        j += ",\"behind\":" + std::string(s.behind ? "true" : "false");
+        // relation is "" when ancestry could not be settled (no [update].repo,
+        // or the fetch failed), in which case the page should not claim a
+        // direction it does not have.
+        j += ",\"relation\":\"" + JsonEscape(s.relation) + "\"";
+        j += ",\"ahead\":" + std::to_string(s.ahead);
+        j += ",\"behind_by\":" + std::to_string(s.behindBy) + "}";
         return j;
     }
 
@@ -948,6 +1019,154 @@ namespace {
         return j;
     }
 
+    /**
+     * Whether the store view is being shown as the Unlocker tab.
+     *
+     * The client window and the store are separate CEF targets that cannot see
+     * each other's globals, so the flag lives here, where both already talk. The
+     * client sets it when the tab opens and clears it on the way out; the store
+     * script reads it to decide whether to present prices as free and send Add
+     * to Cart to LUAFlipper instead.
+     *
+     * Held as a lease rather than a plain flag, because the cost of the two
+     * failure directions is not symmetric. Expiring early only drops the free
+     * pricing off our own tab; staying on by mistake rewrites the real Store
+     * tab, where the user may be about to spend money. So the client has to keep
+     * saying it is still there, and anything that stops the tab from saying so,
+     * a crashed page script, a missed close, a navigation nobody handled, ends
+     * with the store back to normal on its own.
+     *
+     * Deliberately not persisted. If the client dies with the lease held, the
+     * next start should show an ordinary store, not a silently rewritten one.
+     */
+    constexpr auto kUnlockerLease = std::chrono::seconds(6);
+    std::atomic<long long> g_unlockerUntil{0};   // steady ms; 0 is off
+
+    long long SteadyMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    bool UnlockerModeOn() {
+        return g_unlockerUntil.load(std::memory_order_acquire) > SteadyMs();
+    }
+
+    std::string JsonUnlockerMode(const std::string& fullPath) {
+        const std::string set = QueryParam(fullPath, "set");
+        if (!set.empty()) {
+            const bool on = (set == "1" || set == "true");
+            g_unlockerUntil.store(
+                on ? SteadyMs() + std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      kUnlockerLease).count()
+                   : 0,
+                std::memory_order_release);
+            LOG_DEBUG("LuaFlipperUI: unlocker mode {}", on ? "on" : "off");
+        }
+        const long long until = g_unlockerUntil.load(std::memory_order_acquire);
+        return std::string("{\"on\":") +
+               (until > SteadyMs() ? "true" : "false") + "}";
+    }
+
+
+    /* -------------------------------------------------------- store bridge --- */
+
+    // Defined below, once every endpoint it dispatches to exists.
+    std::string RouteApi(const std::string& fullPath);
+
+    // Page-side names the bridge script talks to. Requests go out through the
+    // binding, replies and mode changes come back as evaluated statements.
+    constexpr const char* kBridgeName = "__luaflipperBridge";
+
+    /**
+     * Whether a store page may ask for this path.
+     *
+     * The binding is reachable by any script running in the store target, ours
+     * or Valve's or whatever a compromised store page might carry, so it is not
+     * a general door into the API. Only the two calls the store integration
+     * actually makes are allowed through; the mode is pushed rather than
+     * requested, so it is not on the list either.
+     */
+    bool BridgeAllows(const std::string& path) {
+        const std::string p = path.substr(0, path.find('?'));
+        return p == "/api/sources" || p == "/api/install";
+    }
+
+    /**
+     * Serve one store target for as long as it lives.
+     *
+     * Steam's store pages carry a CSP whose connect-src permits Valve's own
+     * hosts and Steam's local helper port, and nothing else, so a script in that
+     * page cannot fetch the module the way the client-window UI does. A CDP
+     * binding is not a network request and so is not subject to that, which
+     * makes it the channel that works without weakening the page: no CSP bypass,
+     * and no reachable surface beyond BridgeAllows.
+     *
+     * The connection has to stay open because it *is* the channel, unlike the
+     * main window where injection is one-shot. Losing it ends the thread, and
+     * the injector loop notices and starts a new one.
+     */
+    void StoreBridgeThread(std::string wsUrl, std::string script,
+                           std::shared_ptr<std::atomic<bool>> alive) {
+        WebSocket s;
+        if (!s.Open(wsUrl)) { alive->store(false); return; }
+        // Short enough that a mode change reaches the page promptly, since the
+        // loop can only push it between reads.
+        s.SetRecvTimeout(1);
+
+        s.Call("Page.enable", "{}");
+        s.Call("Runtime.enable", "{}");
+        s.Call("Runtime.addBinding",
+               std::string("{\"name\":\"") + kBridgeName + "\"}");
+        const std::string src = JsonEscape(script);
+        s.Call("Page.addScriptToEvaluateOnNewDocument",
+               "{\"source\":\"" + src + "\"}");
+        s.Call("Runtime.evaluate", "{\"expression\":\"" + src + "\"}");
+
+        bool pushed = false;
+        bool needPush = true;      // the freshly injected script knows nothing yet
+
+        while (!s.closed) {
+            const std::string msg = s.Recv();
+
+            if (!msg.empty() && msg.find("\"Runtime.bindingCalled\"") != std::string::npos) {
+                const std::string payload = JsonString(msg, "payload");
+                const long long id = JsonNumber(payload, "id");
+                const std::string path = JsonString(payload, "path");
+                std::string body = "{\"ok\":false,\"error\":\"refused\"}";
+                if (id >= 0 && BridgeAllows(path)) body = RouteApi(path);
+                // Serving happens on this thread on purpose: an install downloads
+                // and unpacks through libcurl, which is not safe to enter from
+                // several threads at once. One store view, one request at a time.
+                s.Post("Runtime.evaluate",
+                       "{\"expression\":\"" +
+                       JsonEscape("window.__luaflipperBridgeReply&&window."
+                                  "__luaflipperBridgeReply(" + std::to_string(id) +
+                                  "," + body + ")") + "\"}");
+            }
+
+            // A new document starts with none of our state, so re-send it.
+            if (!msg.empty() &&
+                (msg.find("Runtime.executionContextsCleared") != std::string::npos ||
+                 msg.find("\"Page.frameNavigated\"") != std::string::npos))
+                needPush = true;
+
+            const bool on = UnlockerModeOn();
+            if (needPush || on != pushed) {
+                s.Post("Runtime.evaluate",
+                       "{\"expression\":\"" +
+                       JsonEscape(std::string("window.__luaflipperMode=") +
+                                  (on ? "true" : "false") +
+                                  ";window.__luaflipperSetMode&&window.__luaflipperSetMode()") +
+                       "\"}");
+                pushed = on;
+                needPush = false;
+            }
+        }
+
+        s.Close();
+        alive->store(false);
+    }
+
     std::string RouteApi(const std::string& fullPath) {
         const std::string path = fullPath.substr(0, fullPath.find('?'));
 
@@ -961,6 +1180,7 @@ namespace {
             if (term.empty()) return "{\"results\":[]}";
             return JsonSearch(term);
         }
+        if (path == "/api/unlocker/mode") return JsonUnlockerMode(fullPath);
         if (path == "/api/cloud")        return JsonCloud();
         if (path == "/api/cloud/enable")  return JsonCloudEnable();
         if (path == "/api/cloud/disable") return JsonCloudDisable();
@@ -1100,12 +1320,17 @@ namespace {
         // Page renderers. Optional: luaflipper.js falls back to a built-in
         // renderer when this is absent, so a partial install still shows a UI.
         const std::string pages = ReadWholeFile(uiDir / "luaflipper.pages.js");
+        // Store integration. A separate script because it runs in a separate
+        // target: the store is ordinary web pages, not the client's React app.
+        const std::string store = ReadWholeFile(uiDir / "luaflipper.store.js");
         if (js.empty()) {
             LOG_ERROR("LuaFlipperUI: no UI assets at {}", uiDir.string());
             return;
         }
 
         std::string lastTarget;
+        // Store targets we are bridging, and whether that bridge is still up.
+        std::map<std::string, std::shared_ptr<std::atomic<bool>>> storeTargets;
         bool haveClasses = false;
         // Each distinct failure is reported once. Without this the loop is
         // silent when it never succeeds, which is exactly when a log is needed.
@@ -1124,6 +1349,31 @@ namespace {
                 once(1, "no reply from the CEF debugger on 127.0.0.1:8080; is "
                         ".cef-enable-remote-debugging present and Steam restarted?");
                 continue;
+            }
+
+            // Store views come and go as the user navigates, so this runs every
+            // pass rather than once. Each gets its own bridge thread, which owns
+            // the connection for as long as the view lives; targets are tracked
+            // by debugger URL, which carries the target id, so a view that is
+            // torn down and rebuilt is picked up again as a new one.
+            if (!store.empty()) {
+                const std::vector<std::string> live = StoreTargets(list);
+                for (const std::string& t : live) {
+                    auto held = storeTargets.find(t);
+                    if (held != storeTargets.end()) {
+                        if (held->second->load()) continue;      // still serving
+                        storeTargets.erase(held);                // died, take it again
+                    }
+                    auto alive = std::make_shared<std::atomic<bool>>(true);
+                    storeTargets[t] = alive;
+                    std::thread(StoreBridgeThread, t, store, alive).detach();
+                    LOG_INFO("LuaFlipperUI: store bridge attached to {}", t);
+                }
+                // Forget the ones that are gone, or the map grows for as long as
+                // Steam runs.
+                for (auto it = storeTargets.begin(); it != storeTargets.end();)
+                    it = (std::find(live.begin(), live.end(), it->first) == live.end())
+                             ? storeTargets.erase(it) : std::next(it);
             }
 
             // The nav lives in the main client window. SharedJSContext holds an

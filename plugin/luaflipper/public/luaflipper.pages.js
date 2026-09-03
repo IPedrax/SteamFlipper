@@ -2901,10 +2901,13 @@
       return v;
     }
 
+    // Version leads: it is the thing a user is meant to reason about. The
+    // commit stays as a secondary line for a build made between releases, but
+    // nobody has to read a sha to know whether they are current.
     fact("Version", text(data && data.version) || "unknown", false);
+    var headVal = fact("Latest version", "not checked yet", false);
     fact("Built from", known ? (sha + (branch ? " on " + branch : ""))
-                             : "no commit, built outside a git tree", known);
-    var headVal = fact("Branch head", "not checked yet", false);
+                             : "no commit, built outside a git tree", false);
 
     // Appended on the first answer that carries one, rather than reserved
     // empty: a blank row above the button would read as a fact we are missing.
@@ -2976,20 +2979,48 @@
             return;
           }
 
-          headVal.textContent = text(res.remote);
+          // Prefer the version; fall back to the sha only when the VERSION
+          // file could not be read, so the row is never blank.
+          headVal.textContent = text(res.remote_version) || text(res.remote) || "unknown";
           if (res.message) commit(text(res.message));
 
-          if (!res.behind) {
+          // `relation` is the settled ancestry: current / behind / ahead /
+          // diverged, or "" when it could not be worked out. Only "behind" is a
+          // fast-forward the user can actually take, so only it offers the
+          // button. Saying "the branch has moved on" for the other three was
+          // wrong and, worse, offered an update that then no-opped.
+          var rel = text(res.relation);
+          var br = text(res.branch) || "remote";
+
+          if (rel === "ahead" || (!res.behind && rel !== "diverged")) {
             headVal.style.color = GOOD;
             armCheck();
-            say("SteamFlipper is up to date.");
+            say(rel === "ahead"
+              ? "This build (" + text(res.version) + ") is newer than " + br +
+                " (" + (text(res.remote_version) || "unknown") + "). Nothing to update."
+              : "SteamFlipper is up to date.");
             return;
           }
+
+          if (rel === "diverged") {
+            // No fast-forward exists, so there is nothing the button could do.
+            headVal.style.color = LINK_TEXT;
+            armCheck();
+            say("This build and " + br + " have diverged: " +
+                plural(num(res.ahead), "commit") + " here, " +
+                plural(num(res.behind_by), "commit") + " there. " +
+                "Reconcile them with git before updating.");
+            return;
+          }
+
           headVal.style.color = LINK_TEXT;
           armApply();
-          say("The " + (text(res.branch) || "remote") + " branch has moved on " +
-              "since this build. Updating pulls the source; it does not touch " +
-              "the running client.");
+          say(rel === "behind" && res.remote_version
+            ? "Version " + text(res.remote_version) + " is available (this build " +
+              "is " + text(res.version) + "). Updating pulls the source; it does " +
+              "not touch the running client."
+            : "The " + br + " branch has moved on since this build. Updating " +
+              "pulls the source; it does not touch the running client.");
         }).catch(function (e) {
           // Named as a transport failure: in the same muted line as the
           // answers above, an unlabelled one would read as one of them.
