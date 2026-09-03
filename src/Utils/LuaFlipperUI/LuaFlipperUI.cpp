@@ -23,6 +23,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1167,7 +1168,20 @@ namespace {
         alive->store(false);
     }
 
+    /**
+     * One request at a time, whichever thread asked.
+     *
+     * The loopback server was written serial on purpose: several endpoints
+     * download through libcurl, which the steam-runtime hands us without a
+     * thread-safe implicit curl_global_init, and entering it from two threads
+     * at once took the whole client down twice while this was being built. The
+     * store bridge added a second caller, one per store view, so the guarantee
+     * that used to come from having a single thread now has to be stated.
+     */
+    std::mutex g_apiLock;
+
     std::string RouteApi(const std::string& fullPath) {
+        std::lock_guard<std::mutex> serialize(g_apiLock);
         const std::string path = fullPath.substr(0, fullPath.find('?'));
 
         if (path == "/api/manifests") return JsonManifests();
