@@ -1152,6 +1152,22 @@ namespace {
         return std::string("{\"ok\":") + (shown ? "true" : "false") + "}";
     }
 
+    // The pointer moved onto the popup. Cancels the close the tab scheduled
+    // when the pointer left it, which is the same movement seen from the
+    // other side.
+    std::string JsonNavMenuKeep() {
+        EvalInTarget("\"Steam\"",
+                     "window.__luaflipperMenuKeep&&window.__luaflipperMenuKeep()");
+        return "{\"ok\":true}";
+    }
+
+    // And left it, for somewhere that is not the tab either.
+    std::string JsonNavMenuClose() {
+        EvalInTarget("\"Steam\"",
+                     "window.__luaflipperMenuClose&&window.__luaflipperMenuClose()");
+        return "{\"ok\":true}";
+    }
+
     std::string JsonNavMenuHide() {
         EvalInTarget("\"SharedJSContext\"",
                      "window.__luaflipperMenu&&window.__luaflipperMenu.hide()");
@@ -1860,6 +1876,8 @@ namespace {
         // one call that needs the user's own lua.tools token.
         if (path == "/api/navmenu/show") return JsonNavMenuShow(fullPath);
         if (path == "/api/navmenu/hide") return JsonNavMenuHide();
+        if (path == "/api/navmenu/keep") return JsonNavMenuKeep();
+        if (path == "/api/navmenu/close") return JsonNavMenuClose();
         if (path == "/api/navmenu/pick") return JsonNavMenuPick(fullPath);
 
         if (path == "/api/hubcap/stats") return JsonHubcapStats();

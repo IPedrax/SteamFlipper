@@ -103,6 +103,23 @@
     }
     d.body.innerHTML = html + "</div>";
 
+    /*
+     * The pointer crossing into this window has to reach the tab that opened
+     * it, and cannot get there on its own.
+     *
+     * The tab closes the menu shortly after the pointer leaves it, which is
+     * right for an in-page menu because the menu is under the same pointer.
+     * A separate window is not: leaving the tab means leaving it towards this
+     * window, and the tab sees only the leaving. So this says when the pointer
+     * arrives, in time to cancel that close, and when it leaves for real.
+     */
+    d.addEventListener("mouseenter", function () {
+      try { fetch(API + "navmenu/keep"); } catch (e) {}
+    }, true);
+    d.addEventListener("mouseleave", function () {
+      try { fetch(API + "navmenu/close"); } catch (e) {}
+    }, true);
+
     // Hover and click are wired here rather than with inline handlers, which
     // this document's CSP would refuse.
     var rows = d.body.querySelectorAll("[data-page]");

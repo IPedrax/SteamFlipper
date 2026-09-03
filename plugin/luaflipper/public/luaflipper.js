@@ -334,6 +334,14 @@
     openPage(page);
   };
 
+  // The pointer reached the popup, so the close scheduled when it left the tab
+  // was the first half of that same movement and should not fire. Without this
+  // the menu vanishes on the way to it and cannot be clicked at all.
+  window.__luaflipperMenuKeep = function () { cancelClose(); };
+
+  // And left the popup for somewhere that is not the tab.
+  window.__luaflipperMenuClose = function () { closeMenu(); };
+
   function openMenu(tab) {
     // A close scheduled by a previous mouseleave must not fire onto the menu
     // we are about to open.
