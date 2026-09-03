@@ -1,0 +1,178 @@
+/*
+ * LUAFlipper styling.
+ *
+ * Written for custom-theme compatibility. Steam themes work by overriding
+ * Steam's own classes, so a private palette here would simply ignore them and
+ * look wrong on any non-stock skin. Three rules follow from that:
+ *
+ *   1. No opaque background of our own. The page sits inside .ContentFrame and
+ *      inherits whatever background the active theme gives it.
+ *   2. Text uses `inherit`, so it picks up the theme's foreground colour.
+ *   3. Separators, hovers and accents are alpha over that inherited surface, or
+ *      `currentColor`, so they stay legible whatever the theme resolves to.
+ *
+ * The one exception is the floating dropdown, which has no ancestor to inherit
+ * from; luaflipper.js copies a background onto it from the live nav bar.
+ *
+ * Everything is scoped under .LUAFlipperPage / .luaflipper-* so it cannot leak
+ * into Steam's UI, and so theme authors have a stable handle to target.
+ */
+
+/* ------------------------------------------------------------ dropdown --- */
+
+/* Values here are measured from the live Account Menu so the stock skin
+   matches: background rgb(61,68,80), min-width 234px, square corners, items
+   8px/18px at 13px in rgb(220,222,223). The element also carries Steam's own
+   contextMenu / MenuPopup / contextMenuItem class names, so a custom theme
+   restyling Steam's menus restyles this one too. */
+/* Positioning applies always; the menu is placed by script, not by Steam.
+   min-width is forced off because Steam sizes each menu to its own content with
+   an inline min-width (Library 102px, Store 138px, the account menu 234px), and
+   we copy the account menu's class list. Without this the dropdown inherits the
+   widest menu in the client instead of matching the nav menus beside it. */
+.luaflipper-menu {
+  position: fixed;
+  z-index: 100000;
+  min-width: 0;
+}
+
+/* Appearance is the fallback only. When the injector supplied Steam's real
+   hashed classes the menu carries .is-steam-styled and Steam's own rules do
+   all of this, so staying out of the way keeps themes authoritative. */
+.luaflipper-menu:not(.is-steam-styled) {
+  background: #3d4450;   /* rgb(61,68,80), Steam's own menu surface */
+  border-radius: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  font-family: inherit;
+}
+
+.luaflipper-menu:not(.is-steam-styled) .luaflipper-menu-contents {
+  padding: 4px 0;
+}
+
+.luaflipper-menu:not(.is-steam-styled) .luaflipper-menu-item {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #dcdedf;
+}
+
+.luaflipper-menu:not(.is-steam-styled) .luaflipper-menu-item:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.luaflipper-menu-item { cursor: pointer; }
+
+/* The dropdown is the only page switcher, so the open page is marked here.
+   currentColor rather than a fixed accent, so themes carry through. */
+.luaflipper-menu-item.active {
+  box-shadow: inset 2px 0 0 currentColor;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ---------------------------------------------------------------- page --- */
+
+.LUAFlipperPage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Deliberately transparent: .ContentFrame supplies the themed background. */
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
+
+.luaflipper-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 24px;
+}
+
+.luaflipper-sub {
+  font-size: 12px;
+  opacity: 0.65;
+  margin-bottom: 10px;
+}
+
+.luaflipper-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  margin-bottom: 4px;
+}
+
+.luaflipper-row:hover { background: rgba(255, 255, 255, 0.08); }
+
+.luaflipper-appid {
+  font-family: Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  min-width: 74px;
+  opacity: 0.75;
+}
+
+.luaflipper-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.luaflipper-meta {
+  font-size: 11.5px;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+
+/* Alpha over the inherited surface, so both survive a custom theme. */
+.luaflipper-input {
+  flex: 1;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  outline: none;
+}
+
+.luaflipper-input:focus { border-color: rgba(255, 255, 255, 0.3); }
+
+.luaflipper-button {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.luaflipper-button:hover { background: rgba(255, 255, 255, 0.18); }
+
+.luaflipper-empty,
+.luaflipper-loading {
+  padding: 32px 8px;
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.luaflipper-error {
+  padding: 14px 16px;
+  border-radius: 3px;
+  background: rgba(220, 80, 80, 0.12);
+  border: 1px solid rgba(220, 80, 80, 0.35);
+  font-size: 12.5px;
+}
+
+.luaflipper-error .luaflipper-sub { margin: 6px 0 0; }

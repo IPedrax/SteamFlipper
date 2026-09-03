@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
+  "name": "luaflipper",
+  "common_name": "LuaFlipper",
+  "description": "Manage SteamFlipper manifests, fixes and cloud redirect from inside Steam.",
+  "version": "0.1.0",
+  "backendType": "lua",
+  "include": [
+    "public"
+  ]
+}

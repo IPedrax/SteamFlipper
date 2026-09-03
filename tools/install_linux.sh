@@ -314,6 +314,29 @@ else
     warn "    no steamclient.so found"
 fi
 
+# --- client UI ---------------------------------------------------------------
+# The LUAFlipper tab is injected into Steam's CEF frontend at runtime, so the
+# assets live on disk rather than being compiled in; the module reads them from
+# here on every launch and a reinstall is enough to pick up UI changes.
+say "Installing client UI"
+mkdir -p "${STEAM_DIR}/steamflipper/ui"
+for f in luaflipper.js luaflipper.pages.js luaflipper.css; do
+    if [ -f "${REPO_ROOT}/plugin/luaflipper/public/${f}" ]; then
+        install -Dm644 "${REPO_ROOT}/plugin/luaflipper/public/${f}" \
+                       "${STEAM_DIR}/steamflipper/ui/${f}"
+    else
+        warn "    missing ${f}; the UI may not load"
+    fi
+done
+
+# Steam only opens the CEF debugger, the sole channel into the frontend, when
+# this marker exists. It is read at client startup, so creating it here means it
+# is already in place for the next launch.
+if [ ! -e "${STEAM_DIR}/.cef-enable-remote-debugging" ]; then
+    : > "${STEAM_DIR}/.cef-enable-remote-debugging"
+    say "    enabled CEF remote debugging (needed by the UI)"
+fi
+
 # --- depot decryption keys ---------------------------------------------------
 # Created here so a first-time install has somewhere to drop manifests, and so
 # the key sync below reports "none yet" instead of failing on a missing path.
