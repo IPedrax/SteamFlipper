@@ -842,6 +842,232 @@ namespace {
         return j;
     }
 
+    /* ------------------------------------------------------- config write --- */
+
+    /**
+     * Set one key in steamflipper.toml, in place.
+     *
+     * Deliberately a line edit rather than a parse-and-reserialise. toml++ can
+     * write a document back out, but it would come back stripped of the comments
+     * that explain every setting in that file, and those comments are most of
+     * what makes it editable by hand. So the section is found, the key inside it
+     * is rewritten if present and appended if not, and everything else is
+     * untouched.
+     *
+     * The file is hot-reloaded, so a write lands without a restart for anything
+     * read through Config::Get*.
+     */
+    bool WriteConfigKey(const std::string& section, const std::string& key,
+                        const std::string& rawValue, std::string& err) {
+        const std::filesystem::path path =
+            std::filesystem::path(g_steamPath) / "steamflipper.toml";
+        std::string body = ReadWholeFile(path);
+
+        const std::string header = "[" + section + "]";
+        const size_t sec = body.find(header);
+
+        if (sec == std::string::npos) {
+            if (!body.empty() && body.back() != '\n') body += "\n";
+            body += "\n" + header + "\n" + key + " = " + rawValue + "\n";
+        } else {
+            // The section runs to the next header or to EOF. Staying inside it
+            // matters: several sections could carry a key of the same name.
+            size_t end = body.find("\n[", sec + header.size());
+            end = (end == std::string::npos) ? body.size() : end + 1;
+
+            size_t at = std::string::npos;
+            for (size_t i = body.find(key, sec); i < end && i != std::string::npos;
+                 i = body.find(key, i + 1)) {
+                // Start of a line, and the key is the whole word before '='.
+                const size_t lineStart = body.rfind('\n', i);
+                const std::string before =
+                    body.substr(lineStart + 1, i - lineStart - 1);
+                if (before.find_first_not_of(" \t") != std::string::npos) continue;
+                const size_t eq = body.find_first_not_of(" \t", i + key.size());
+                if (eq != std::string::npos && body[eq] == '=') { at = i; break; }
+            }
+
+            if (at == std::string::npos) {
+                body.insert(end, key + " = " + rawValue + "\n");
+            } else {
+                size_t lineEnd = body.find('\n', at);
+                if (lineEnd == std::string::npos) lineEnd = body.size();
+                body.replace(at, lineEnd - at, key + " = " + rawValue);
+            }
+        }
+
+        // Written through a temp file in the same directory so a crash mid-write
+        // cannot leave the config truncated, which would silently reset every
+        // setting in it on the next read.
+        const std::filesystem::path tmp = path.string() + ".sfnew";
+        {
+            std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+            if (!f) { err = "cannot write to " + tmp.string(); return false; }
+            f << body;
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) { err = ec.message(); std::filesystem::remove(tmp, ec); return false; }
+
+        // The file can now hold a credential, so it stops being world-readable.
+        std::filesystem::permissions(
+            path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+            std::filesystem::perm_options::replace, ec);
+        return true;
+    }
+
+    // A TOML basic string. The values that reach here are an API key and source
+    // names, but quoting is not the caller's job to remember.
+    std::string TomlString(const std::string& v) {
+        std::string out = "\"";
+        for (char c : v) {
+            if (c == '"' || c == '\\') out += '\\';
+            if (c == '\n' || c == '\r') continue;
+            out += c;
+        }
+        return out + "\"";
+    }
+
+    /* ------------------------------------------------------------- hubcap --- */
+
+    /**
+     * What this Hubcap key is worth today.
+     *
+     * Free: the stats endpoint does not consume the daily allowance it reports.
+     * Passed through mostly as Hubcap sends it, because these are its numbers
+     * about the user's own key and restating them here would only add a place
+     * for the two to disagree.
+     */
+    // The configured order, so the page can draw the list it edits. Emitted
+    // alongside every hubcap answer because the two are one screen.
+    std::string SourceOrderJson() {
+        std::string j = ",\"order\":[";
+        bool first = true;
+        for (const std::string& n : Config::GetSourceOrder()) {
+            j += first ? "" : ",";
+            first = false;
+            j += "\"" + JsonEscape(n) + "\"";
+        }
+        return j + "]";
+    }
+
+    /*
+     * The key itself is never sent back.
+     *
+     * The page only needs to know whether one is set and what it is worth; the
+     * value would be a credential travelling to a browser view for no reason,
+     * and any local process that can reach this port would get it for free.
+     * Replacing a key means typing the new one, which is what a settings screen
+     * does anyway.
+     */
+    std::string JsonHubcapStats() {
+        const std::string key = Config::GetHubcapKey();
+        if (key.empty())
+            return "{\"configured\":false" + SourceOrderJson() + "}";
+
+        // Same shape check the download path runs, so a typo is named as a typo
+        // rather than spent on a request that comes back 401.
+        bool shaped = key.size() == 100 && key.compare(0, 4, "smm_") == 0;
+        for (size_t i = 4; shaped && i < key.size(); i++) {
+            const char c = key[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) shaped = false;
+        }
+        if (!shaped)
+            return "{\"configured\":true,\"valid\":false,\"error\":\"A Hubcap key is "
+                   "\\\"smm_\\\" followed by 96 hex characters.\"" +
+                   SourceOrderJson() + "}";
+
+        const std::string url =
+            "https://hubcapmanifest.com/api/v1/user/stats?api_key=" + key;
+        auto r = SFPlatform::Http::Execute(L"GET", url.c_str(), nullptr, 0, nullptr,
+                                           5000, 5000, 10000, 15000, 16u * 1024u);
+        if (r.ok && r.status == 401)
+            return "{\"configured\":true,\"valid\":false,\"error\":\"Hubcap rejected "
+                   "this key.\"" + SourceOrderJson() + "}";
+        if (!r.ok || r.status != 200)
+            return "{\"configured\":true,\"valid\":false,\"error\":\"Hubcap is "
+                   "unreachable.\"" + SourceOrderJson() + "}";
+
+        std::string j = "{\"configured\":true,\"valid\":true";
+        j += ",\"used\":"    + std::to_string(JsonNumber(r.body, "daily_usage"));
+        j += ",\"limit\":"   + std::to_string(JsonNumber(r.body, "daily_limit"));
+        j += ",\"expires\":\"" +
+             JsonEscape(JsonString(r.body, "api_key_expires_at")) + "\"";
+        // can_make_requests is Hubcap's own verdict, and it can be false while
+        // used < limit (an expired key, for one). Reported rather than derived.
+        j += ",\"canRequest\":" +
+             std::string(r.body.find("\"can_make_requests\":true") != std::string::npos
+                         ? "true" : "false");
+        j += SourceOrderJson();
+        j += "}";
+        return j;
+    }
+
+    /**
+     * Save the Hubcap key from the page.
+     *
+     * Shape-checked before it is written: the file is hot-reloaded, so a bad
+     * value would be live immediately and every later error would be about a
+     * request rather than about the typo that caused it. An empty value clears
+     * the key, which is the only way to take the source back out from here.
+     */
+    std::string JsonHubcapSave(const std::string& fullPath) {
+        const std::string key = QueryParam(fullPath, "key");
+
+        if (!key.empty()) {
+            bool shaped = key.size() == 100 && key.compare(0, 4, "smm_") == 0;
+            for (size_t i = 4; shaped && i < key.size(); i++) {
+                const char c = key[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) shaped = false;
+            }
+            if (!shaped)
+                return "{\"error\":\"A Hubcap key is \\\"smm_\\\" followed by 96 "
+                       "hex characters.\"}";
+        }
+
+        std::string err;
+        if (!WriteConfigKey("hubcap", "key", TomlString(key), err))
+            return "{\"error\":\"Could not save: " + JsonEscape(err) + "\"}";
+        LOG_INFO("LuaFlipperUI: hubcap key {}", key.empty() ? "cleared" : "saved");
+        return "{\"ok\":true,\"cleared\":" +
+               std::string(key.empty() ? "true" : "false") + "}";
+    }
+
+    /**
+     * Save the order sources are tried in.
+     *
+     * Names are not validated against the built-in set. A source this build does
+     * not know is simply never matched when the probe orders itself, and one
+     * left out of the list is tried last rather than dropped, so the worst a bad
+     * list can do is fail to reorder.
+     */
+    std::string JsonSourcesSave(const std::string& fullPath) {
+        const std::string order = QueryParam(fullPath, "order");
+
+        std::string arr = "[";
+        size_t at = 0;
+        bool first = true;
+        while (at <= order.size()) {
+            const size_t comma = order.find(',', at);
+            const std::string name = order.substr(
+                at, comma == std::string::npos ? std::string::npos : comma - at);
+            if (!name.empty()) {
+                arr += first ? "" : ", ";
+                first = false;
+                arr += TomlString(name);
+            }
+            if (comma == std::string::npos) break;
+            at = comma + 1;
+        }
+        arr += "]";
+
+        std::string err;
+        if (!WriteConfigKey("sources", "order", arr, err))
+            return "{\"error\":\"Could not save: " + JsonEscape(err) + "\"}";
+        LOG_INFO("LuaFlipperUI: source order saved as {}", arr);
+        return "{\"ok\":true}";
+    }
+
     /* -------------------------------------------------------------- fixes --- */
 
     // LuaTools' fix catalog. Reading it needs no account: /denuvo/listings and
@@ -1442,6 +1668,10 @@ namespace {
 
         // Fixes. The catalog and the per-app list are free; the download is the
         // one call that needs the user's own lua.tools token.
+        if (path == "/api/hubcap/stats") return JsonHubcapStats();
+        if (path == "/api/hubcap/save")  return JsonHubcapSave(fullPath);
+        if (path == "/api/sources/order") return JsonSourcesSave(fullPath);
+
         if (path == "/api/fixes/catalog") return JsonFixCatalog();
         if (path == "/api/fixes/list") {
             const std::string id = QueryParam(fullPath, "appid");

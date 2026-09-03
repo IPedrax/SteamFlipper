@@ -1,8 +1,10 @@
 #include "LuaFlipperDownload.h"
 
 #include "SFPlatform/include/Http.h"
+#include "Utils/Config/Config.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -80,6 +82,32 @@ namespace {
     };
 
     constexpr const char* kProbeUrl = "http://167.235.229.108/check_apis?appid=";
+
+    /*
+     * Hubcap (hubcapmanifest.com), the one source that takes no proxy.
+     *
+     * Not a row in kSources because it does not fit that shape: the URL carries
+     * the user's own API key, and it answers a free existence check the shared
+     * probe knows nothing about. Downloads count against that key's own daily
+     * limit rather than any pool this project shares, which is exactly why the
+     * key is the user's to supply and is never defaulted.
+     *
+     * The name matches LuaTools' own catalog entry, so a manifest installed by
+     * either is attributed the same way.
+     */
+    constexpr const char* kHubcapName = "Sadie (Hubcap)";
+    constexpr const char* kHubcapBase = "https://hubcapmanifest.com";
+
+    // "smm_" followed by 96 lowercase hex. Checked before the key goes into a
+    // URL, so a typo is answered here rather than as someone else's 401.
+    bool IsHubcapKey(const std::string& k) {
+        if (k.size() != 100 || k.compare(0, 4, "smm_") != 0) return false;
+        for (size_t i = 4; i < k.size(); i++) {
+            const char c = k[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
+    }
 
     // A pack runs to a few MB, so Http::Execute's 256 KiB default would silently
     // truncate one. This is headroom rather than a target; anything cut short at
@@ -353,22 +381,78 @@ std::string ProbeSources(const std::string& appId) {
 
     const SFPlatform::Http::Result r = Get(kProbeUrl + appId, 8192);
 
+    /*
+     * Ordered before it is emitted, because the order IS the preference: every
+     * caller that installs walks this list top down and takes the first source
+     * that works, so putting the user's choice first here is the whole feature.
+     *
+     * A configured name that this build does not know matches nothing and is
+     * skipped; a known source left out of the list keeps its built-in position
+     * behind the ones that were named. Neither can disable a source, which is
+     * what makes a typo in the list harmless.
+     */
+    std::vector<std::string> order;
+    for (const std::string& want : Config::GetSourceOrder()) {
+        bool known = (want == kHubcapName);
+        for (const Source& src : kSources) if (want == src.name) known = true;
+        if (known &&
+            std::find(order.begin(), order.end(), want) == order.end())
+            order.push_back(want);
+    }
+    for (const Source& src : kSources)
+        if (std::find(order.begin(), order.end(), src.name) == order.end())
+            order.push_back(src.name);
+    if (std::find(order.begin(), order.end(), kHubcapName) == order.end())
+        order.push_back(kHubcapName);
+
     std::string j = "{\"appid\":\"" + JsonEscape(appId) + "\",\"sources\":[";
     bool first = true;
-    for (const Source& s : kSources) {
-        // A dead probe is not fatal: check_apis is Ryuu's own host and Sushi is a
-        // GitHub repo that does not depend on it, so report "unknown" and let the
-        // user try rather than hiding a source that still works.
-        std::string status = "unknown";
-        if (r.ok && r.status == 200) {
-            const std::string v = JsonField(r.body, s.name);
-            status = v.empty() ? "unavailable" : v;
+    for (const std::string& name : order) {
+        std::string status;
+
+        if (name != kHubcapName) {
+            // A dead probe is not fatal: check_apis is Ryuu's own host and Sushi
+            // is a GitHub repo that does not depend on it, so report "unknown"
+            // and let the user try rather than hiding a source that still works.
+            status = "unknown";
+            if (r.ok && r.status == 200) {
+                const std::string v = JsonField(r.body, name);
+                status = v.empty() ? "unavailable" : v;
+            }
+            j += first ? "" : ",";
+            first = false;
+            j += "{\"name\":\"" + JsonEscape(name) +
+                 "\",\"status\":\"" + JsonEscape(status) + "\"}";
+            continue;
+        }
+
+        // Hubcap is asked separately: its status comes from its own free
+        // endpoint rather than the shared probe, which does not list it. Without
+        // a key the honest answer is that one is needed, not "unavailable" - the
+        // manifest may well be there.
+        const std::string key = Config::GetHubcapKey();
+        status = "needs key";
+        if (IsHubcapKey(key)) {
+            const std::string url = std::string(kHubcapBase) + "/api/v1/status/" + appId;
+            const std::wstring auth = L"Authorization: Bearer " +
+                                      std::wstring(key.begin(), key.end()) + L"\r\n";
+            const SFPlatform::Http::Result hr = SFPlatform::Http::Execute(
+                L"GET", url.c_str(), nullptr, 0, auth.c_str(),
+                5000, 5000, 10000, 15000, 8192);
+            if (!hr.ok)                 status = "unknown";
+            else if (hr.status == 401)  status = "bad key";
+            else if (hr.status != 200)  status = "unavailable";
+            else status = hr.body.find("\"manifest_file_exists\":true") != std::string::npos
+                          ? "available" : "unavailable";
+        } else if (!key.empty()) {
+            status = "bad key";
         }
         j += first ? "" : ",";
         first = false;
-        j += "{\"name\":\"" + JsonEscape(s.name) +
+        j += "{\"name\":\"" + JsonEscape(kHubcapName) +
              "\",\"status\":\"" + JsonEscape(status) + "\"}";
     }
+
     j += "]}";
     return j;
 #else
@@ -383,21 +467,50 @@ std::string Install(const std::string& appId, const std::string& source,
     if (!IsAppId(appId))   return JsonError("invalid appid");
     if (steamPath.empty()) return JsonError("no Steam path");
 
-    const Source* src = FindSource(source);
-    if (!src) return JsonError("unknown source '" + source + "'");
+    // Hubcap is fetched with the user's key against its own host; everything
+    // below this point is the same archive handling as the keyless sources.
+    const bool hubcap = (source == kHubcapName);
+    std::string label = source;
+    std::string url;
 
-    const std::string url = std::string(src->prefix) + appId + src->suffix;
+    if (hubcap) {
+        const std::string key = Config::GetHubcapKey();
+        if (key.empty())
+            return JsonError("Hubcap needs your own API key. Put it in "
+                             "steamflipper.toml as [hubcap] key = \"smm_...\" "
+                             "and restart Steam.");
+        if (!IsHubcapKey(key))
+            return JsonError("That does not look like a Hubcap key: they are "
+                             "\"smm_\" followed by 96 hex characters.");
+        url = std::string(kHubcapBase) + "/api/v1/manifest/" + appId +
+              "?api_key=" + key;
+    } else {
+        const Source* src = FindSource(source);
+        if (!src) return JsonError("unknown source '" + source + "'");
+        label = src->name;
+        url = std::string(src->prefix) + appId + src->suffix;
+    }
+
     const SFPlatform::Http::Result r = Get(url, kMaxZipBytes);
     if (!r.ok)
-        return JsonError(std::string("cannot reach ") + src->name);
-    if (r.status != 200)
-        return JsonError(std::string(src->name) + " returned HTTP " +
-                         std::to_string(r.status));
+        return JsonError("cannot reach " + label);
+    if (r.status != 200) {
+        // Hubcap answers these three specifically, and each has a different
+        // thing for the user to do about it.
+        if (hubcap && r.status == 401)
+            return JsonError("Hubcap rejected the key. Check it in Config, or "
+                             "generate a new one.");
+        if (hubcap && r.status == 429)
+            return JsonError("This key's daily Hubcap limit is spent.");
+        if (hubcap && r.status == 404)
+            return JsonError("Hubcap has no manifest for this app.");
+        return JsonError(label + " returned HTTP " + std::to_string(r.status));
+    }
 
     std::vector<CdEntry> entries;
     std::string err;
     if (!ReadCentralDirectory(r.body, entries, err))
-        return JsonError(std::string(src->name) + ": " + err);
+        return JsonError(label + ": " + err);
 
     const fs::path luaDir      = fs::path(steamPath) / "config" / "stplug-in";
     const fs::path manifestDir = fs::path(steamPath) / "depotcache";
@@ -476,7 +589,7 @@ std::string Install(const std::string& appId, const std::string& source,
         // Carry the per-entry reasons along, since they are the only explanation
         // of why a 200 with a valid archive still installed nothing.
         return "{\"error\":\"" +
-               JsonEscape(std::string(src->name) + " has no installable .lua or "
+               JsonEscape(label + " has no installable .lua or "
                           ".manifest for appid " + appId) +
                "\",\"rejected\":" + JsonArray(rejected) + "}";
     }

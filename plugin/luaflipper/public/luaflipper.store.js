@@ -208,8 +208,11 @@
         var res = parse(body);
         if (!res) { retry("Unavailable"); a.title = "LUAFlipper unreachable"; return; }
 
+        // "needs key" and "bad key" are Hubcap saying this machine cannot use
+        // it, not that the app is missing. Neither is worth a request.
         var live = (res.sources || []).filter(function (s) {
-          return s && s.name && s.status !== "unavailable";
+          return s && s.name && s.status !== "unavailable" &&
+                 s.status !== "needs key" && s.status !== "bad key";
         });
         if (!live.length) { retry("No source"); return; }
 

@@ -54,6 +54,18 @@ namespace Config {
     // is never shipped or defaulted.
     std::string GetFixesToken();
 
+    // [hubcap].key - the user's own hubcapmanifest.com API key, "smm_" plus 96
+    // hex. Hubcap is the one manifest source that takes no proxy: the key is
+    // the user's, downloads count against their own daily limit, and nothing
+    // here mints or validates one.
+    std::string GetHubcapKey();
+
+    // [sources].order - the manifest sources to try, most preferred first.
+    // Empty means the built-in order. Names not recognised are ignored, and
+    // any source left out of the list is still tried, just last: a typo should
+    // reorder nothing rather than silently disable a source.
+    std::vector<std::string> GetSourceOrder();
+
     // [ui].enabled - the in-client LUAFlipper UI. Default true.
     bool GetUiEnabled();
     bool GetDiagnosticsPopups();
@@ -92,6 +104,13 @@ namespace Config {
     // which the Fixes page reports rather than papering over: a download that
     // 401s is not a network problem and should not be described as one.
     inline std::string fixesToken;
+
+    // [hubcap].key - see GetHubcapKey above. Empty means the Sadie (Hubcap)
+    // source reports "needs key" rather than pretending to be unavailable.
+    inline std::string hubcapKey;
+
+    // [sources].order - see GetSourceOrder above.
+    inline std::vector<std::string> sourceOrder;
 
     // [diagnostics] — when false, SteamDiagnostics::ShowWarning stays silent.
     // Signature/IPC specs are published per steamclient hash, and none exist

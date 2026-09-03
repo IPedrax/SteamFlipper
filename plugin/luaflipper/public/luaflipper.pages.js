@@ -685,6 +685,21 @@
 
   // Only digits reach a CDN URL or a query string. Steam app ids are numeric,
   // so stripping the rest doubles as the validity test for a search result.
+  /**
+   * Whether a source can actually be asked to install right now.
+   *
+   * "unavailable" means it does not carry the app. Hubcap adds two more that
+   * are about this machine rather than the app: "needs key" when none is
+   * configured and "bad key" when the one that is does not pass. Both are worth
+   * showing, and neither is worth trying, so a fallthrough that treated them as
+   * live would spend a click to be told what the row already says.
+   */
+  function installable(s) {
+    var st = text(s && s.status);
+    return !!(s && text(s.name)) &&
+           st !== "unavailable" && st !== "needs key" && st !== "bad key";
+  }
+
   /** A byte count as something a person reads. */
   function bytes(n) {
     if (!n) return "0 B";
@@ -1697,7 +1712,7 @@
             // The same filter the app page's Add button uses, so this line and
             // that button cannot disagree about how many sources there are.
             var live = arr(ok.sources).filter(function (s) {
-              return s && text(s.name) && text(s.status) !== "unavailable";
+              return installable(s);
             });
             avail.textContent = live.length
               ? "Free - " + plural(live.length, "source")
@@ -2156,7 +2171,7 @@
           // row shape, and which sources answered is still worth reaching.
           sub.title = found.map(function (s) {
             var n = text(s.name);
-            return text(s.status) === "unavailable" ? n + " (unavailable)" : n;
+            return installable(s) ? n : n + " (" + text(s.status) + ")";
           }).join(", ");
           actions.appendChild(addRow(id, found, note, setInstalled, statusVal));
         })
@@ -2295,9 +2310,7 @@
      * still tried, since that only means the probe host did not answer.
      */
     function addRow(id, sources, note, setInstalled, statusVal) {
-      var live = sources.filter(function (s) {
-        return text(s.status) !== "unavailable";
-      });
+      var live = sources.filter(installable);
 
       // 2px of padding and 2px gaps, so the well shows as hairlines between the
       // three parts and they read as one control rather than three.
@@ -3602,6 +3615,198 @@
   }
 
   /**
+   * Sources.
+   *
+   * Two things are decided here. Which source is tried first, because every
+   * install walks the list top down and takes the first that answers, so the
+   * order is the preference. And the Hubcap key, because Hubcap is the one
+   * source that is the user's own account rather than a shared endpoint.
+   *
+   * Both write straight into steamflipper.toml, which is hot-reloaded, so a
+   * save is live without restarting Steam. The file is the record either way;
+   * this page is a nicer way to edit it than a text editor, not a second store.
+   */
+  function hubcapSection(data, el, pane) {
+    pane.appendChild(dialogHead(el, "Sources"));
+
+    // Held so a save can rebuild without re-fetching, and so the reorder
+    // buttons have something to reorder.
+    var order = arr(data && data.order);
+    if (!order.length) order = ["Ryuu", "Sushi", "Sadie (Hubcap)"];
+
+    var about = {
+      "Ryuu": "No account needed. Plain HTTP to a bare IP, so the archive is " +
+              "only as trustworthy as the network path to it.",
+      "Sushi": "No account needed. Served from a GitHub repository.",
+      "Sadie (Hubcap)": "Your own hubcapmanifest.com account. Downloads count " +
+              "against this key's daily limit, not a shared one."
+    };
+
+    var listHost = el("div");
+    pane.appendChild(listHost);
+
+    var said = style(el("div"), {
+      display: "none", padding: "12px", borderRadius: "3px",
+      background: SET.field, fontSize: "13px", lineHeight: "19px",
+      marginBottom: "16px"
+    });
+    pane.appendChild(said);
+
+    function tell(msg, good) {
+      said.textContent = msg;
+      said.style.display = "";
+      said.style.color = good ? "#a4d007" : "#e7a94a";
+    }
+
+    function saveOrder() {
+      fetch(API + "sources/order?order=" +
+            encodeURIComponent(order.join(",")))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res && res.error) { tell(text(res.error), false); return; }
+          tell("Order saved. Installs try " + order[0] + " first.", true);
+        })
+        .catch(function (e) {
+          tell("Could not save: " + why(e), false);
+        });
+    }
+
+    function move(i, by) {
+      var to = i + by;
+      if (to < 0 || to >= order.length) return;
+      var tmp = order[i];
+      order[i] = order[to];
+      order[to] = tmp;
+      drawList();
+      saveOrder();
+    }
+
+    function drawList() {
+      var g = fieldGroup(el);
+
+      order.forEach(function (name, i) {
+        var hub = name === "Sadie (Hubcap)";
+        var right = field(el, g, (i + 1) + ".  " + name,
+          about[name] || "A manifest source.",
+          hub ? hubcapState(data) : style(el("div", null, "no account needed"), {
+            fontSize: "13px", color: SET.desc
+          }));
+
+        // Up and down rather than drag: three rows do not need a drag model,
+        // and a button says what it will do before it is pressed.
+        [["\u25B2", -1, i > 0], ["\u25BC", 1, i < order.length - 1]]
+          .forEach(function (spec) {
+            var b = dialogBtn(el, spec[0]);
+            style(b, { padding: "0 10px", lineHeight: "26px", fontSize: "11px" });
+            if (!spec[2]) b.busyLook(true);
+            else b.addEventListener("click", function () { move(i, spec[1]); });
+            right.appendChild(b);
+          });
+      });
+
+      only(listHost, g);
+    }
+
+    function hubcapState(d) {
+      var configured = !!(d && d.configured), valid = !!(d && d.valid);
+      var label = !configured ? "no key"
+                : (valid ? (num(d.used) + " of " + num(d.limit) + " today")
+                         : "key rejected");
+      return style(el("div", null, label), {
+        fontSize: "13px",
+        color: configured && valid ? "#a4d007" : (configured ? "#e7a94a" : SET.desc)
+      });
+    }
+
+    drawList();
+
+    /* ---------------------------------------------------------- key --- */
+
+    pane.appendChild(style(el("div", null, "Hubcap key"), {
+      fontSize: "16px", fontWeight: "700", color: "#ffffff",
+      margin: "6px 0 10px"
+    }));
+
+    var g2 = fieldGroup(el);
+    pane.appendChild(g2);
+
+    // Never prefilled: the module does not send the key back, on purpose, so
+    // there is nothing to fill it with. The placeholder carries the only fact
+    // the page actually needs, which is whether one is already saved.
+    var input = el("input", "luaflipper-input");
+    input.type = "password";              // a credential, on a screen someone may be sharing
+    input.placeholder = (data && data.configured)
+      ? "a key is saved. Type a new one to replace it"
+      : "smm_...";
+    style(input, {
+      border: "0", borderRadius: "2px", background: "rgba(0,0,0,0.35)",
+      padding: "0 10px", height: "30px", width: "320px", fontSize: "13px"
+    });
+
+    var save = dialogBtn(el, "Save");
+    var right = field(el, g2, "API key",
+      "Kept in steamflipper.toml, read at startup, and sent only to " +
+      "hubcapmanifest.com. Save an empty field to remove it.", input);
+    right.appendChild(save);
+
+    save.addEventListener("click", function () {
+      var key = (input.value || "").trim();
+      save.busyLook(true);
+      save.textContent = "Saving";
+      fetch(API + "hubcap/save?key=" + encodeURIComponent(key))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          save.busyLook(false);
+          save.textContent = "Save";
+          if (res && res.error) { tell(text(res.error), false); return; }
+          if (res && res.cleared) {
+            tell("Key removed. Hubcap will report that it needs one.", true);
+            data = { configured: false, order: order };
+            input.value = "";
+            input.placeholder = "smm_...";
+            drawList();
+            return;
+          }
+          // Re-read rather than assume: the only interesting question about a
+          // key is whether Hubcap accepts it, and that is not local knowledge.
+          tell("Saved. Checking it with Hubcap...", true);
+          fetch(API + "hubcap/stats")
+            .then(function (r) { return r.json(); })
+            .then(function (st) {
+              data = st || {};
+              input.value = "";
+              input.placeholder = "a key is saved. Type a new one to replace it";
+              drawList();
+              if (st && st.valid) {
+                tell("Key accepted. " + num(st.used) + " of " + num(st.limit) +
+                     " downloads used today.", true);
+              } else {
+                tell(text(st && st.error) || "Hubcap did not accept this key.",
+                     false);
+              }
+            })
+            .catch(function (e) { tell("Saved, but the check failed: " + why(e), false); });
+        })
+        .catch(function (e) {
+          save.busyLook(false);
+          save.textContent = "Save";
+          tell("Could not save: " + why(e), false);
+        });
+    });
+
+    if (data && data.configured && data.valid && text(data.expires)) {
+      field(el, g2, "Key expires", "As reported by Hubcap.",
+            text(data.expires).substring(0, 10));
+    }
+
+    pane.appendChild(style(el("div", null,
+      "Hubcap is a separate account. Get a key from their Discord, paste it " +
+      "above and save; nothing else needs a restart."), {
+      fontSize: "13px", color: SET.desc, marginTop: "4px"
+    }));
+  }
+
+  /**
    * A section that is nothing but reported facts: what the module loaded, and
    * what it found.
    *
@@ -3625,9 +3830,39 @@
     var g = fieldGroup(el);
     pane.appendChild(g);
     list.forEach(function (r) {
-      var right = field(el, g, text(r.label), "", text(r.value));
-      right.title = text(r.value);
+      var value = text(r.value);
+      var right = field(el, g, text(r.label), "", linkify(el, value) || value);
+      right.title = value;
     });
+  }
+
+  /**
+   * A row value that is an address, as something clickable.
+   *
+   * The API row is the one anybody actually wants to open, and reading a
+   * host:port off a settings page to retype it into a browser is a silly way to
+   * spend a minute. Returns null for values that are not addresses, so the
+   * caller falls back to plain text and a path or a count is never dressed up
+   * as a link.
+   *
+   * steam:// rather than window.open: the client resolves that itself and shows
+   * it in its own browser window, where window.open from this context either
+   * opens nothing or takes over the view the UI is sitting in.
+   */
+  function linkify(el, value) {
+    var url = /^https?:\/\//.test(value) ? value
+            : (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(value) ? "http://" + value : "");
+    if (!url) return null;
+
+    var a = style(el("div", null, value), {
+      color: LINK_TEXT, cursor: "pointer", fontSize: "13px",
+      textDecoration: "underline", textDecorationColor: "rgba(102,192,244,0.4)"
+    });
+    a.title = "Open " + url;
+    a.addEventListener("click", function () {
+      try { window.location.href = "steam://openurl/" + url; } catch (e) {}
+    });
+    return a;
   }
 
   /* ------------------------------------------------------------- config --- */
@@ -3694,6 +3929,8 @@
         draw: function (p) { updatesSection(data, el, p); } },
       { name: "Cloud saves", load: "cloud",
         draw: function (p, got) { cloudSection(got, el, p); } },
+      { name: "Sources", load: "hubcap/stats",
+        draw: function (p, got) { hubcapSection(got, el, p); } },
       { name: "Configuration",
         draw: function (p) {
           rowsSection(el, p, "Configuration", data,

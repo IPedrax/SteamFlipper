@@ -21,6 +21,8 @@ namespace {
         bool updateEnabled = true;
         std::string updateRepo;
         std::string fixesToken;
+        std::string hubcapKey;
+        std::vector<std::string> sourceOrder;
         bool diagnosticsPopups = true;
         bool uiEnabled = true;
         std::vector<InjectDll> injectDlls;
@@ -61,6 +63,8 @@ namespace {
         updateEnabled          = snapshot.updateEnabled;
         updateRepo             = snapshot.updateRepo;
         fixesToken             = snapshot.fixesToken;
+        hubcapKey              = snapshot.hubcapKey;
+        sourceOrder            = snapshot.sourceOrder;
         diagnosticsPopups      = snapshot.diagnosticsPopups;
         uiEnabled              = snapshot.uiEnabled;
         injectDlls             = snapshot.injectDlls;
@@ -176,6 +180,23 @@ namespace {
             if (auto fixes = tbl["fixes"].as_table()) {
                 if (auto val = (*fixes)["token"].value<std::string>()) {
                     snapshot.fixesToken = *val;
+                }
+            }
+
+            // [sources]
+            if (auto src = tbl["sources"].as_table()) {
+                if (auto arr = (*src)["order"].as_array()) {
+                    for (const auto& v : *arr) {
+                        if (auto str = v.value<std::string>())
+                            snapshot.sourceOrder.push_back(*str);
+                    }
+                }
+            }
+
+            // [hubcap]
+            if (auto hub = tbl["hubcap"].as_table()) {
+                if (auto val = (*hub)["key"].value<std::string>()) {
+                    snapshot.hubcapKey = *val;
                 }
             }
 
@@ -313,6 +334,16 @@ namespace {
     std::string GetFixesToken() {
         std::lock_guard lock(g_mutex);
         return fixesToken;
+    }
+
+    std::string GetHubcapKey() {
+        std::lock_guard lock(g_mutex);
+        return hubcapKey;
+    }
+
+    std::vector<std::string> GetSourceOrder() {
+        std::lock_guard lock(g_mutex);
+        return sourceOrder;
     }
 
     bool GetUiEnabled() {
