@@ -63,6 +63,13 @@
     try { window.__luaflipperCleanup(); } catch (e) {}
   }
 
+  // A number from whatever the backend sent. The popup's rectangle arrives as
+  // JSON and a missing field must not become NaN in a comparison.
+  function num(v) {
+    var n = parseInt(v, 10);
+    return isNaN(n) ? 0 : n;
+  }
+
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -303,6 +310,7 @@
    * worse on three pages and correct everywhere, so it is the safety net.
    */
   var popupMenuUp = false;
+  var popupRect = null;      // where it is, in this window's coordinates
 
   function tryPopupMenu(tab, then) {
     var r = tab.getBoundingClientRect();
@@ -314,7 +322,13 @@
     try {
       fetch(API + "navmenu/show?x=" + x + "&y=" + y)
         .then(function (res) { return res.json(); })
-        .then(function (res) { done(!!(res && res.ok)); })
+        .then(function (res) {
+          if (res && res.ok) {
+            popupRect = { x: num(res.x), y: num(res.y),
+                          w: num(res.w), h: num(res.h) };
+          }
+          done(!!(res && res.ok));
+        })
         .catch(function () { done(false); });
     } catch (e) { done(false); return; }
     // A stalled request must not leave the tab with no menu at all.
@@ -324,6 +338,7 @@
   function hidePopupMenu() {
     if (!popupMenuUp) return;
     popupMenuUp = false;
+    popupRect = null;
     try { fetch(API + "navmenu/hide"); } catch (e) {}
   }
 
@@ -413,29 +428,37 @@
 
   function scheduleClose() {
     cancelClose();
-    // A popup is a separate window and dismisses itself: it hides on blur, and
-    // it hides when an item is picked. Closing it on a timer because the
-    // pointer left the tab is wrong, because leaving the tab is exactly what
-    // moving onto the menu looks like from here, and the timer won the race
-    // every time. What replaces it is watching for the pointer coming back
-    // into this window, below, which is a signal this window can actually see.
-    if (popupMenuUp) return;
     closeTimer = setTimeout(closeMenu, 220);
   }
 
+  /** Whether a point is inside the popup, in this window's coordinates. */
+  function inPopup(x, y) {
+    return !!popupRect &&
+      x >= popupRect.x - 2 && x <= popupRect.x + popupRect.w + 2 &&
+      y >= popupRect.y - 2 && y <= popupRect.y + popupRect.h + 2;
+  }
+
   /*
-   * The pointer is back in the client window, somewhere that is not the tab.
+   * Where the pointer is, for a menu that is a separate window.
    *
-   * This is the dismissal the popup route needs. Whether a pointer resting on
-   * an unfocused popup window delivers events to it is not something this side
-   * can rely on, so nothing here waits to hear from the popup; it watches the
-   * one pointer it can always see, and the menu goes when that pointer is
-   * demonstrably somewhere else.
+   * Two things are true at once and the fix needs both. This window goes on
+   * receiving mouse movement that happens over the popup, because the popup
+   * overlaps it without taking the pointer -- so leaving the tab towards the
+   * menu is visible here, and treating it as leaving is what kept closing the
+   * menu under the pointer. And this window receives nothing at all while the
+   * pointer is over a browser view, because that surface does take the
+   * pointer -- so moving away across the Store cannot be seen, and something
+   * has to close the menu without being told.
+   *
+   * So the timer from leaving the tab stays, and movement inside the popup
+   * cancels it. Moving away over anything this window can see closes at once;
+   * moving away over a browser view lets the timer do it.
    */
   document.addEventListener("mousemove", function (ev) {
     if (!popupMenuUp) return;
     var tab = document.getElementById(TAB_ID);
     if (tab && (ev.target === tab || tab.contains(ev.target))) return;
+    if (inPopup(ev.clientX, ev.clientY)) { cancelClose(); return; }
     closeMenu();
   }, true);
 

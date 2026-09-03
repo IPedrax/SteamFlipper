@@ -1141,15 +1141,18 @@ namespace {
             if (v->find_first_not_of("0123456789") != std::string::npos)
                 return "{\"ok\":false}";
         }
-        // String rather than boolean, because the reply's value field is read
-        // as text and "false" and an absent helper have to be told apart.
+        // The helper answers with its own rectangle as a JSON string, or false.
+        // Passed through rather than reduced to a boolean: the client window
+        // needs those coordinates to tell movement over the popup apart from
+        // movement over itself.
         const std::string expr =
-            "String(!!(window.__luaflipperMenu && window.__luaflipperMenu.show(" +
-            x + "," + y + "," + kMenuItems + ")))";
+            "String((window.__luaflipperMenu && window.__luaflipperMenu.show(" +
+            x + "," + y + "," + kMenuItems + ")) || false)";
         std::string got;
-        const bool sent = EvalInTarget("\"SharedJSContext\"", expr, &got);
-        const bool shown = sent && got == "true";
-        return std::string("{\"ok\":") + (shown ? "true" : "false") + "}";
+        if (!EvalInTarget("\"SharedJSContext\"", expr, &got) || got.empty() ||
+            got.compare(0, 1, "{") != 0)
+            return "{\"ok\":false}";
+        return got;
     }
 
     // The pointer moved onto the popup. Cancels the close the tab scheduled

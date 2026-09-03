@@ -166,6 +166,8 @@
     catch (e) {}
   }
 
+  // Returns a JSON string describing where it landed, or false. A string
+  // rather than a boolean because the caller needs the rectangle.
   function show(x, y, list) {
     if (!available()) return false;
     items = list && list.length ? list : items;
@@ -194,7 +196,11 @@
     // is also how the menu closes when the user looks somewhere else.
     try { popup.Focus(); } catch (e) {}
     try { paint(popup.m_popup); } catch (e) { return false; }
-    return true;
+    // The rectangle back, in the coordinates it was asked for. The caller sits
+    // in a window this popup overlaps without taking the pointer from it, so
+    // it goes on seeing mouse movement that is really happening over here and
+    // needs the geometry to tell the two apart.
+    return JSON.stringify({ ok: true, x: x, y: y, w: 220, h: height() });
   }
 
   window.__luaflipperMenu = {
