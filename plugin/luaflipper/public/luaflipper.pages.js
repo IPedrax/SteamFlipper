@@ -111,6 +111,113 @@
   }
 
   /**
+   * The lua.tools sign-in, shared by every page that needs one.
+   *
+   * Their catalog is free and their downloads are not: fixes and the proxied
+   * manifest sources sit behind the same session, so signing in on one page
+   * unlocks the other. That is the whole reason this is one component rather
+   * than two copies -- the account is not a property of the page it was
+   * entered on.
+   *
+   * The route is their Discord bot: /login replies with a short code, the code
+   * is the credential, and it is single-use with a five-minute life. Nothing
+   * here handles a password or opens an OAuth window.
+   */
+  function luaToolsAccount(el, onChange) {
+    var node = style(el("div"), {
+      display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px",
+      padding: "10px 12px", borderRadius: "3px", background: "rgba(0,0,0,0.2)"
+    });
+
+    function draw(st) {
+      node.innerHTML = "";
+      var signedIn = !!(st && st.signedIn);
+
+      node.appendChild(style(el("div", null,
+        signedIn ? "Signed in to lua.tools" : "Not signed in to lua.tools"), {
+        fontSize: "13px", fontWeight: "bold",
+        color: signedIn ? "#a4d007" : SET.label, flex: "0 0 auto"
+      }));
+
+      node.appendChild(style(el("div", null, signedIn
+        ? (st.supporter ? "Supporter: downloads are unlimited."
+                        : "Downloads count against 25 a day, shared between "
+                          + "fixes and manifests.")
+        : "Unlocks fix downloads and the proxied manifest sources."), {
+        fontSize: "12px", color: SET.desc, flex: "1 1 auto", minWidth: "0"
+      }));
+
+      if (signedIn) {
+        var out = dialogBtn(el, "Sign out");
+        node.appendChild(out);
+        out.addEventListener("click", function () {
+          out.busyLook(true);
+          fetch(API + "fixes/logout").then(function (r) { return r.json(); })
+            .then(function () { draw({ signedIn: false }); if (onChange) onChange(); })
+            .catch(function () { out.busyLook(false); });
+        });
+        return;
+      }
+
+      var code = el("input", "luaflipper-input");
+      code.type = "text";
+      code.placeholder = "code from /login";
+      code.maxLength = 12;
+      style(code, {
+        border: "0", borderRadius: "2px", background: "rgba(0,0,0,0.35)",
+        padding: "0 10px", height: "28px", width: "150px", fontSize: "13px",
+        textTransform: "uppercase", flex: "0 0 auto"
+      });
+      node.appendChild(code);
+
+      var go = dialogBtn(el, "Sign in");
+      node.appendChild(go);
+
+      var said = style(el("div"), {
+        flex: "0 0 auto", fontSize: "12px", color: "#e7a94a", maxWidth: "40%"
+      });
+      node.appendChild(said);
+      node.appendChild(link(el, "Get a code", "https://discord.gg/luatools"));
+
+      go.addEventListener("click", function () {
+        var v = (code.value || "").trim();
+        if (!v) { said.textContent = "Run /login with their Discord bot first."; return; }
+        go.busyLook(true);
+        go.textContent = "Signing in";
+        fetch(API + "fixes/login?code=" + encodeURIComponent(v))
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            go.busyLook(false);
+            go.textContent = "Sign in";
+            if (!res || res.error) {
+              said.textContent = text(res && res.error) || "Sign-in failed.";
+              return;
+            }
+            // Re-read rather than assume: what the session is worth is not
+            // local knowledge.
+            fetch(API + "fixes/account").then(function (r) { return r.json(); })
+              .then(function (a) { draw(a); if (onChange) onChange(); })
+              .catch(function () { draw({ signedIn: true }); if (onChange) onChange(); });
+          })
+          .catch(function (e) {
+            go.busyLook(false);
+            go.textContent = "Sign in";
+            said.textContent = "Could not reach SteamFlipper: " + why(e);
+          });
+      });
+    }
+
+    draw(null);
+    fetch(API + "fixes/account").then(function (r) { return r.json(); })
+      .then(draw).catch(skip);
+
+    return { node: node, refresh: function () {
+      fetch(API + "fixes/account").then(function (r) { return r.json(); })
+        .then(draw).catch(skip);
+    } };
+  }
+
+  /**
    * The Fixes page: the library, filtered to games a fix exists for.
    *
    * Two views in one element, toggled rather than rebuilt, so coming back from
@@ -163,108 +270,9 @@
     page.appendChild(gridView);
     page.appendChild(gameView);
 
-    /* -------------------------------------------------------- account --- */
-
-    /*
-     * Signing in, without a browser or a password.
-     *
-     * lua.tools authenticates through Supabase, and the route that suits a
-     * program with no browser is their Discord bot: /login there replies with a
-     * short code, and the code is the credential. It is single-use and lives
-     * five minutes, so it is not a secret worth storing, and the module keeps
-     * only the refresh token it becomes.
-     *
-     * Here rather than in Config because this is the page where the thing it
-     * unlocks lives, and the reason to sign in is the download button two
-     * clicks away.
-     */
-    var account = style(el("div"), {
-      display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px",
-      padding: "10px 12px", borderRadius: "3px", background: "rgba(0,0,0,0.2)"
-    });
-    gridView.appendChild(account);
-
-    function drawAccount(st) {
-      account.innerHTML = "";
-      var signedIn = !!(st && st.signedIn);
-
-      account.appendChild(style(el("div", null,
-        signedIn ? "Signed in to lua.tools" : "Not signed in to lua.tools"), {
-        fontSize: "13px", fontWeight: "bold",
-        color: signedIn ? "#a4d007" : SET.label, flex: "0 0 auto"
-      }));
-
-      account.appendChild(style(el("div", null, signedIn
-        ? (st.supporter ? "Supporter: downloads are unlimited."
-                        : "Downloads count against 25 a day, shared with manifests.")
-        : "The catalog above is free. Downloading a fix needs an account."), {
-        fontSize: "12px", color: SET.desc, flex: "1 1 auto", minWidth: "0"
-      }));
-
-      if (signedIn) {
-        var out = dialogBtn(el, "Sign out");
-        account.appendChild(out);
-        out.addEventListener("click", function () {
-          out.busyLook(true);
-          fetch(API + "fixes/logout").then(function (r) { return r.json(); })
-            .then(function () { drawAccount({ signedIn: false }); })
-            .catch(function () { out.busyLook(false); });
-        });
-        return;
-      }
-
-      var code = el("input", "luaflipper-input");
-      code.type = "text";
-      code.placeholder = "code from /login";
-      code.maxLength = 12;
-      style(code, {
-        border: "0", borderRadius: "2px", background: "rgba(0,0,0,0.35)",
-        padding: "0 10px", height: "28px", width: "150px", fontSize: "13px",
-        textTransform: "uppercase", flex: "0 0 auto"
-      });
-      account.appendChild(code);
-
-      var go = dialogBtn(el, "Sign in");
-      account.appendChild(go);
-
-      var said = style(el("div"), {
-        flex: "0 0 auto", fontSize: "12px", color: "#e7a94a", maxWidth: "42%"
-      });
-      account.appendChild(said);
-
-      account.appendChild(link(el, "Get a code",
-        "https://discord.gg/luatools"));
-
-      go.addEventListener("click", function () {
-        var v = (code.value || "").trim();
-        if (!v) { said.textContent = "Run /login with their Discord bot first."; return; }
-        go.busyLook(true);
-        go.textContent = "Signing in";
-        fetch(API + "fixes/login?code=" + encodeURIComponent(v))
-          .then(function (r) { return r.json(); })
-          .then(function (res) {
-            go.busyLook(false);
-            go.textContent = "Sign in";
-            if (!res || res.error) {
-              said.textContent = text(res && res.error) || "Sign-in failed.";
-              return;
-            }
-            // Re-read rather than assume: the only question worth answering is
-            // what the session is actually worth, and that is not local.
-            fetch(API + "fixes/account").then(function (r) { return r.json(); })
-              .then(drawAccount).catch(function () { drawAccount({ signedIn: true }); });
-          })
-          .catch(function (e) {
-            go.busyLook(false);
-            go.textContent = "Sign in";
-            said.textContent = "Could not reach SteamFlipper: " + why(e);
-          });
-      });
-    }
-
-    drawAccount(null);
-    fetch(API + "fixes/account").then(function (r) { return r.json(); })
-      .then(drawAccount).catch(skip);
+    // Signing in here also unlocks the proxied manifest sources on the Sources
+    // page, because it is one account behind both.
+    gridView.appendChild(luaToolsAccount(el, null).node);
 
     gridView.appendChild(style(el("div", "luaflipper-sub",
       list.length + " of " + plural(num(data.installed), "installed manifest") +
@@ -815,16 +823,16 @@
   /**
    * Whether a source can actually be asked to install right now.
    *
-   * "unavailable" means it does not carry the app. Hubcap adds two more that
-   * are about this machine rather than the app: "needs key" when none is
-   * configured and "bad key" when the one that is does not pass. Both are worth
-   * showing, and neither is worth trying, so a fallthrough that treated them as
-   * live would spend a click to be told what the row already says.
+   * "unavailable" means it does not carry the app. The rest are about this
+   * machine rather than the app: "needs key" and "bad key" for Hubcap, and
+   * "needs sign-in" for the sources lua.tools only serves through its proxy.
+   * All are worth showing and none is worth trying, so a fallthrough that
+   * treated them as live would spend a click to be told what the row says.
    */
   function installable(s) {
     var st = text(s && s.status);
-    return !!(s && text(s.name)) &&
-           st !== "unavailable" && st !== "needs key" && st !== "bad key";
+    return !!(s && text(s.name)) && st !== "unavailable" &&
+           st !== "needs key" && st !== "bad key" && st !== "needs sign-in";
   }
 
   /** A byte count as something a person reads. */
@@ -3796,6 +3804,12 @@
           "No account needed. Served from a GitHub repository.  ",
           ["Discord", "https://discord.gg/hMdv5dQhcN"]]);
       }
+      if (name === "Luie" || name === "TwentyTwo Cloud" || name === "Skyflare") {
+        return sentence(el, [
+          "Served through lua.tools' proxy, so it needs the sign-in above. " +
+          "Downloads count against the same 25 a day as fixes.  ",
+          ["Discord", "https://discord.gg/luatools"]]);
+      }
       if (name === "Sadie (Hubcap)") {
         return sentence(el, [
           "Your own account on ",
@@ -3805,6 +3819,12 @@
       }
       return "A manifest source.";
     }
+
+    // The same sign-in as the Fixes page. Several of the sources below are
+    // served only through lua.tools' proxy and answer 401 without a session, so
+    // this is the switch that turns them on.
+    var acct = luaToolsAccount(el, function () { drawList(); });
+    pane.appendChild(acct.node);
 
     var listHost = el("div");
     pane.appendChild(listHost);
@@ -3850,10 +3870,13 @@
 
       order.forEach(function (name, i) {
         var hub = name === "Sadie (Hubcap)";
-        var right = field(el, g, (i + 1) + ".  " + name, about(name),
-          hub ? hubcapState(data) : style(el("div", null, "no account needed"), {
-            fontSize: "13px", color: SET.desc
-          }));
+        var proxied = name === "Luie" || name === "TwentyTwo Cloud" ||
+                      name === "Skyflare";
+        var state = hub ? hubcapState(data)
+          : style(el("div", null, proxied ? "needs sign-in" : "no account needed"), {
+              fontSize: "13px", color: SET.desc
+            });
+        var right = field(el, g, (i + 1) + ".  " + name, about(name), state);
 
         // Up and down rather than drag: three rows do not need a drag model,
         // and a button says what it will do before it is pressed.

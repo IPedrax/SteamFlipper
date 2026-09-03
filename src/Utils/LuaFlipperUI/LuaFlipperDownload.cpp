@@ -3,6 +3,10 @@
 #include "SFPlatform/include/Http.h"
 #include "Utils/Config/Config.h"
 
+#include <functional>
+#include <cctype>
+#include <mutex>
+
 #include <cstdio>
 #include <algorithm>
 #include <string>
@@ -95,6 +99,52 @@ namespace {
      * The name matches LuaTools' own catalog entry, so a manifest installed by
      * either is attributed the same way.
      */
+    /*
+     * The sources lua.tools serves through its own proxy.
+     *
+     * These are not reachable any other way: the endpoint answers 401 to
+     * everything without a session, and unlike Ryuu and Sushi they publish no
+     * address of their own that LuaTools falls back to. So they appear in the
+     * list either way, and say they need a sign-in rather than pretending the
+     * app is not carried.
+     *
+     * Ryuu and Sushi are deliberately not here. Both are already fetched
+     * directly and keylessly, and routing them through the proxy would spend a
+     * download from the user's daily 25 to get the same bytes.
+     */
+    constexpr const char* kProxySources[] = { "Luie", "TwentyTwo Cloud", "Skyflare" };
+    constexpr const char* kProxyUrl = "https://lua.tools/api/manifest/download";
+
+    std::mutex g_tokenLock;
+    std::function<std::string()> g_tokenProvider;
+
+    std::string BearerToken() {
+        std::function<std::string()> f;
+        { std::lock_guard<std::mutex> lock(g_tokenLock); f = g_tokenProvider; }
+        return f ? f() : std::string();
+    }
+
+    // Source names carry spaces and brackets, and they go in a query string.
+    std::string UrlEncode(const std::string& in) {
+        static const char* hex = "0123456789ABCDEF";
+        std::string out;
+        for (unsigned char c : in) {
+            if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                out += static_cast<char>(c);
+            } else {
+                out += '%';
+                out += hex[c >> 4];
+                out += hex[c & 0x0F];
+            }
+        }
+        return out;
+    }
+
+    bool IsProxySource(const std::string& name) {
+        for (const char* p : kProxySources) if (name == p) return true;
+        return false;
+    }
+
     constexpr const char* kHubcapName = "Sadie (Hubcap)";
     constexpr const char* kHubcapBase = "https://hubcapmanifest.com";
 
@@ -375,6 +425,38 @@ namespace {
 
 } // namespace
 
+std::vector<std::string> EffectiveOrder() {
+#if defined(__linux__)
+    std::vector<std::string> order;
+    auto known = [](const std::string& n) {
+        if (n == kHubcapName) return true;
+        for (const Source& s : kSources) if (n == s.name) return true;
+        return IsProxySource(n);
+    };
+    // The configured preference first, ignoring names this build does not have:
+    // a typo should reorder nothing rather than invent a source.
+    for (const std::string& want : Config::GetSourceOrder())
+        if (known(want) && std::find(order.begin(), order.end(), want) == order.end())
+            order.push_back(want);
+    for (const Source& src : kSources)
+        if (std::find(order.begin(), order.end(), src.name) == order.end())
+            order.push_back(src.name);
+    for (const char* p : kProxySources)
+        if (std::find(order.begin(), order.end(), p) == order.end())
+            order.push_back(p);
+    if (std::find(order.begin(), order.end(), kHubcapName) == order.end())
+        order.push_back(kHubcapName);
+    return order;
+#else
+    return {};
+#endif
+}
+
+void SetTokenProvider(std::function<std::string()> provider) {
+    std::lock_guard<std::mutex> lock(g_tokenLock);
+    g_tokenProvider = std::move(provider);
+}
+
 std::string ProbeSources(const std::string& appId) {
 #if defined(__linux__)
     if (!IsAppId(appId)) return JsonError("invalid appid");
@@ -391,24 +473,29 @@ std::string ProbeSources(const std::string& appId) {
      * behind the ones that were named. Neither can disable a source, which is
      * what makes a typo in the list harmless.
      */
-    std::vector<std::string> order;
-    for (const std::string& want : Config::GetSourceOrder()) {
-        bool known = (want == kHubcapName);
-        for (const Source& src : kSources) if (want == src.name) known = true;
-        if (known &&
-            std::find(order.begin(), order.end(), want) == order.end())
-            order.push_back(want);
-    }
-    for (const Source& src : kSources)
-        if (std::find(order.begin(), order.end(), src.name) == order.end())
-            order.push_back(src.name);
-    if (std::find(order.begin(), order.end(), kHubcapName) == order.end())
-        order.push_back(kHubcapName);
+    const std::vector<std::string> order = EffectiveOrder();
+    const bool signedIn = !BearerToken().empty();
 
     std::string j = "{\"appid\":\"" + JsonEscape(appId) + "\",\"sources\":[";
     bool first = true;
     for (const std::string& name : order) {
         std::string status;
+
+        if (IsProxySource(name)) {
+            // The probe host knows some of these by name; the rest are simply
+            // unknown until asked. Either way a sign-in is the gate, and that
+            // is the more useful thing to say.
+            if (!signedIn) status = "needs sign-in";
+            else if (r.ok && r.status == 200) {
+                const std::string v = JsonField(r.body, name);
+                status = v.empty() ? "unknown" : v;
+            } else status = "unknown";
+            j += first ? "" : ",";
+            first = false;
+            j += "{\"name\":\"" + JsonEscape(name) +
+                 "\",\"status\":\"" + JsonEscape(status) + "\"}";
+            continue;
+        }
 
         if (name != kHubcapName) {
             // A dead probe is not fatal: check_apis is Ryuu's own host and Sushi
@@ -473,7 +560,15 @@ std::string Install(const std::string& appId, const std::string& source,
     std::string label = source;
     std::string url;
 
-    if (hubcap) {
+    if (IsProxySource(source)) {
+        const std::string token = BearerToken();
+        if (token.empty())
+            return JsonError("Sign in to lua.tools on the Fixes page to use " +
+                             source + ".");
+        url = std::string(kProxyUrl) + "?appid=" + appId + "&source=" +
+              UrlEncode(source);
+        label = source;
+    } else if (hubcap) {
         const std::string key = Config::GetHubcapKey();
         if (key.empty())
             return JsonError("Hubcap needs your own API key. Put it in "
@@ -491,7 +586,28 @@ std::string Install(const std::string& appId, const std::string& source,
         url = std::string(src->prefix) + appId + src->suffix;
     }
 
-    const SFPlatform::Http::Result r = Get(url, kMaxZipBytes);
+    // The proxy is the only source that needs a header; everything else is a
+    // plain GET, and the token must not leak onto hosts that never asked for it.
+    SFPlatform::Http::Result r;
+    if (IsProxySource(source)) {
+        const std::string token = BearerToken();
+        const std::wstring headers =
+            std::wstring(L"Authorization: Bearer ") +
+            std::wstring(token.begin(), token.end()) + L"\r\n" +
+            L"User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:154.0) "
+            L"Gecko/20100101 Firefox/154.0\r\n";
+        r = SFPlatform::Http::Execute(L"GET", url.c_str(), nullptr, 0,
+                                      headers.c_str(), 5000, 5000, 10000, 60000,
+                                      kMaxZipBytes);
+        if (r.ok && (r.status == 401 || r.status == 403))
+            return JsonError("lua.tools refused the session. Sign in again on "
+                             "the Fixes page.");
+        if (r.ok && r.status == 429)
+            return JsonError("The daily lua.tools download limit is spent. It is "
+                             "25 a day, shared with fix downloads.");
+    } else {
+        r = Get(url, kMaxZipBytes);
+    }
     if (!r.ok)
         return JsonError("cannot reach " + label);
     if (r.status != 200) {

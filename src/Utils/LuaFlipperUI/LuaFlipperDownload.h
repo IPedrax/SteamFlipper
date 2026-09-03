@@ -1,6 +1,8 @@
 #pragma once
 
+#include <functional>
 #include <string>
+#include <vector>
 
 // Downloads and installs a Lua manifest pack for one appid.
 //
@@ -16,6 +18,20 @@
 //
 // Non-Linux builds compile to stubs that report an error.
 namespace LuaFlipperDownload {
+
+    // How to get a lua.tools bearer token, or "" when nobody is signed in.
+    //
+    // Injected rather than called directly because the session lives in the UI
+    // module, which already depends on this one; this keeps the arrow pointing
+    // one way. Without it only the keyless sources and Hubcap are offered,
+    // which is exactly the state before anyone signs in.
+    void SetTokenProvider(std::function<std::string()> provider);
+
+    // Every source this build knows, in the order it will try them: the user's
+    // configured preference first, then whatever was left out. The Sources page
+    // draws from this rather than from the config, so a source added by an
+    // update appears without anyone editing a list.
+    std::vector<std::string> EffectiveOrder();
 
     // Which sources carry this appid, per the check_apis probe.
     //   {"appid":"381210","sources":[{"name":"Ryuu","status":"available"}]}

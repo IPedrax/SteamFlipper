@@ -943,7 +943,9 @@ namespace {
     std::string SourceOrderJson() {
         std::string j = ",\"order\":[";
         bool first = true;
-        for (const std::string& n : Config::GetSourceOrder()) {
+        // The effective order, not the configured one: a source this build
+        // knows but nobody has ranked yet still belongs on the page.
+        for (const std::string& n : LuaFlipperDownload::EffectiveOrder()) {
             j += first ? "" : ",";
             first = false;
             j += "\"" + JsonEscape(n) + "\"";
@@ -2431,6 +2433,13 @@ void Initialize(const char* steamInstallPath) {
     // its undo window closed when Steam restarted. Behind the gates it would
     // survive forever on an install that later turned the UI off.
     SweepRemoved();
+
+    // The downloader offers lua.tools' proxied sources only while a session
+    // exists, and the session lives here, so it is handed a way to ask.
+    LuaFlipperDownload::SetTokenProvider([]() {
+        std::string err;
+        return FixesAccessToken(err);
+    });
 
     if (!Config::GetUiEnabled()) {
         LOG_INFO("LuaFlipperUI: [ui].enabled is false, client UI disabled");

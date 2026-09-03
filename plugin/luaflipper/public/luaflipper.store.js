@@ -212,7 +212,8 @@
         // it, not that the app is missing. Neither is worth a request.
         var live = (res.sources || []).filter(function (s) {
           return s && s.name && s.status !== "unavailable" &&
-                 s.status !== "needs key" && s.status !== "bad key";
+                 s.status !== "needs key" && s.status !== "bad key" &&
+                 s.status !== "needs sign-in";
         });
         if (!live.length) { retry("No source"); return; }
 
