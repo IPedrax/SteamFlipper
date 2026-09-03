@@ -737,8 +737,13 @@ namespace {
         };
 
         std::string j = "{\"name\":\"" + JsonEscape(JsonString(r.body, "name")) + "\"";
+        // library_capsule is the portrait art the client's own library draws
+        // with, and the only address that resolves for it: the flat
+        // .../steam/apps/<id>/library_600x900.jpg path predates the hashed
+        // assets and 404s for most of what gets added here.
         const char* keys[] = { "header", "library_hero", "page_background",
-                               "main_capsule", "small_capsule", "hero_capsule" };
+                               "main_capsule", "small_capsule", "hero_capsule",
+                               "library_capsule" };
         for (const char* k : keys)
             j += ",\"" + std::string(k) + "\":\"" + JsonEscape(resolve(k)) + "\"";
 

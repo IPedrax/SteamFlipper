@@ -2029,20 +2029,28 @@
   /* ------------------------------------------------------------- manage --- */
 
   /**
-   * The Manage page: everything already added, in the store's own list shape.
+   * The Manage page: everything a manifest added, shown the way the library
+   * shows a game.
    *
-   * Same visual language as the browse view, because these are the same apps
-   * the user found there and a second skin for the second half of one workflow
-   * reads as a second application.
+   * The library is the page a user already has for "what do I have", so this
+   * borrows its shape instead of inventing a third one. Portrait capsules on a
+   * grid, art filling the tile edge to edge, the name carried only where there
+   * is no art to carry it: that is what Steam does, and the geometry is read off
+   * Steam's own library rather than guessed at (a 150% padding-top box, cover
+   * fit, the same 0 4px 8px shadow under each tile).
+   *
+   * It is not Steam's library filtered down. Filtering the real library would
+   * mean hiding games the user actually bought; this is the list of what
+   * SteamFlipper put on the account, which is the only list where Remove and
+   * Update mean anything.
+   *
+   * What the library has no equivalent for, the key and id counts, moves into
+   * the panel that appears over a tile on hover, next to the two actions. A
+   * manifest with no keys is called out on the tile itself, because it is the
+   * one state where the app is in the library and still cannot be played.
    *
    * /api/manifests knows a file, an app id and two counts and nothing else, so
-   * names and art are looked up per row and filled in late. Until a name lands
-   * the row shows the file name, which is the one label that is always true.
-   *
-   * Rows are deliberately not clickable. openGame() lives inside the Unlocker
-   * renderer's closure and cannot be reached from here, and a second app page
-   * built to make these rows clickable would be a second copy of the one that
-   * is already signed off.
+   * names and art are looked up per tile and filled in late.
    */
   function manage(data, el) {
     var err = errorEl(data, el);
@@ -2077,8 +2085,6 @@
     var page = style(el("div"), { position: "relative", zIndex: "1" });
     wrap.appendChild(page);
 
-    page.appendChild(bigHead(el, "Installed manifests"));
-
     if (!list.length) {
       page.appendChild(el("div", "luaflipper-empty",
         "Nothing added yet. The Unlocker page is where apps are found and " +
@@ -2086,18 +2092,15 @@
       return wrap;
     }
 
-    var sub = el("div", "luaflipper-sub");
-    page.appendChild(sub);
+    /* -------------------------------------------------------- toolbar --- */
 
-    /* -------------------------------------------------------- filter --- */
-
-    // The store's search field, minus the button: nothing here leaves the page,
-    // so there is nothing to submit and nothing to wait for.
+    // No page title. The library does not announce itself either, and the one
+    // thing worth saying up here is how many of these have usable keys.
     var bar = style(el("div"), {
-      display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px"
+      display: "flex", alignItems: "center", gap: "12px", marginBottom: "14px"
     });
     var field = style(el("div"), {
-      display: "flex", alignItems: "stretch", flex: "0 1 420px",
+      display: "flex", alignItems: "stretch", flex: "0 1 360px",
       background: INSET, borderRadius: "3px", overflow: "hidden"
     });
     var input = el("input", "luaflipper-input");
@@ -2111,14 +2114,34 @@
     });
     field.appendChild(input);
     bar.appendChild(field);
+
+    var sub = style(el("div", "luaflipper-sub"), { margin: "0", flex: "1 1 auto" });
+    bar.appendChild(sub);
     // Empty unless a filter is active. A filter whose effect cannot be seen is
     // a filter that gets blamed for the missing row it did not hide.
     var shown = style(el("div"), { fontSize: "12px", opacity: "0.6" });
     bar.appendChild(shown);
     page.appendChild(bar);
 
-    var listBox = el("div");
-    page.appendChild(listBox);
+    /* ----------------------------------------------------------- grid --- */
+
+    // auto-fill rather than a column count, so the grid reflows with the window
+    // the way the library's does. 152px is close to the library's own capsules
+    // at its default zoom, and the fraction unit spends whatever is left over
+    // widening tiles instead of leaving a gutter down the right.
+    // One receipt area for the page rather than one per tile: a note under a
+    // tile would tear a hole in the grid. Above it rather than below, because
+    // below a hundred-odd tiles is off the bottom of the window, and a removal
+    // that reports nothing reads as a removal that did nothing. Every message
+    // names its game, so nothing is lost by collecting them in one place.
+    var note = style(el("div"), { display: "none", marginBottom: "16px" });
+    page.appendChild(note);
+
+    var grid = style(el("div"), {
+      display: "grid", gap: "16px",
+      gridTemplateColumns: "repeat(auto-fill, minmax(152px, 1fr))"
+    });
+    page.appendChild(grid);
 
     var nohit = el("div", "luaflipper-empty", "");
     nohit.style.display = "none";
@@ -2135,7 +2158,7 @@
       });
       // A manifest with keys 0 registers ownership and cannot decrypt a byte of
       // what it owns, which is what a download that starts and then dies looks
-      // like. It leads the summary rather than hiding in a row's key count.
+      // like. It leads the summary rather than hiding in a tile's key count.
       sub.textContent = plural(n, "manifest") + (keyless
         ? ", " + keyless + " with no decryption keys: those register ownership " +
           "but cannot decrypt content, so their downloads start and then fail."
@@ -2151,8 +2174,6 @@
           e.file.toLowerCase().indexOf(q) !== -1 ||
           (e.name !== "" && e.name.toLowerCase().indexOf(q) !== -1);
         e.box.style.display = on ? "" : "none";
-        // A removed row leaves its receipt behind. That is a record of what
-        // just happened, not a listing, so it counts towards neither total.
         if (!e.live) return;
         total++;
         if (on) hits++;
@@ -2164,6 +2185,26 @@
       } else {
         nohit.style.display = "none";
       }
+      resort();
+    }
+
+    /**
+     * Alphabetical, the way the library is.
+     *
+     * /api/manifests comes back in file order, which is app id order, and a
+     * grid of a hundred games in app id order is a grid nobody can find a game
+     * in. Names arrive one lookup at a time, so this runs from refilter(), which
+     * already runs on every arrival, and it moves tiles with the grid's own
+     * order property rather than reinserting nodes: the DOM stays put, and a
+     * tile mid-download or mid-confirm is not torn out from under the pointer.
+     */
+    function resort() {
+      var live = rows.slice().sort(function (a, b) {
+        var x = (a.name || a.file).toLowerCase();
+        var y = (b.name || b.file).toLowerCase();
+        return x < y ? -1 : x > y ? 1 : 0;
+      });
+      live.forEach(function (e, i) { e.box.style.order = i; });
     }
 
     /* --------------------------------------------------------- names --- */
@@ -2172,8 +2213,8 @@
      * One name lookup at a time.
      *
      * The backend serves a single connection and closes each one, so firing a
-     * request per row makes none of them faster: it only puts the user's own
-     * Update or Remove behind every row in the list. A queue holds the wait to
+     * request per tile makes none of them faster: it only puts the user's own
+     * Update or Remove behind every tile in the grid. A queue holds the wait to
      * one request, and ask() means a name the Unlocker already fetched is free.
      */
     var pending = [];
@@ -2202,7 +2243,7 @@
                 if (got) set(text(got.name));
               });
           })
-          // A row that could not be named keeps the file name it was drawn
+          // A tile that could not be named keeps the file name it was drawn
           // with, so there is nothing to report and nothing to undo.
           .catch(skip)
           .then(done);
@@ -2210,9 +2251,44 @@
       drain();
     }
 
-    /* ----------------------------------------------------------- rows --- */
+    /* ----------------------------------------------------------- art --- */
 
-    // Only one row may be armed for removal at a time, and any other click in
+    /**
+     * Fill a tile's image with portrait art, or give up and say so.
+     *
+     * The client's own asset host comes first because that is where Steam keeps
+     * what the library is currently showing, custom art the user set by hand
+     * included, so a tile matches the library rather than merely resembling it.
+     * The flat CDN path covers everything the client has not cached, and
+     * /api/assets resolves the hashed URL for apps published since Steam moved
+     * its art behind those, which is most of what gets added here.
+     */
+    function art(img, id, blank) {
+      var urls = [
+        "https://steamloopback.host/assets/" + id + "/library_600x900.jpg",
+        CDN + id + "/library_600x900.jpg"
+      ];
+      var next = 0;
+
+      img.onerror = function () {
+        if (next < urls.length) { img.src = urls[next++]; return; }
+        // Flat paths exhausted. One request for the hashed one, then stop:
+        // a tile with no art is a normal state, not a failure to retry.
+        img.onerror = blank;
+        ask("assets?appid=" + encodeURIComponent(id))
+          .then(function (res) {
+            var ok = usable(res);
+            var u = ok ? text(ok.library_capsule) : "";
+            if (u) img.src = u; else blank();
+          })
+          .catch(blank);
+      };
+      img.onerror();
+    }
+
+    /* ---------------------------------------------------------- tiles --- */
+
+    // Only one tile may be armed for removal at a time, and any other click in
     // the page puts it back. Bound to the page's own node rather than the
     // document, so the listener dies with the page instead of outliving it on
     // nodes nobody can see.
@@ -2228,6 +2304,40 @@
       if (armed && ev.target !== armed.node) disarm();
     }, true);
 
+    /*
+     * The outcome of an action.
+     *
+     * report() does this for the Unlocker but is closed over that renderer's
+     * own `el`, so calling it from here would mean editing the call sites it
+     * was signed off with. `rejected` shows on success too: it is the only
+     * explanation for a run that reported 200 and still skipped half the
+     * archive.
+     */
+    function say(ok, head, rejected) {
+      var b = el("div", ok ? null : "luaflipper-error");
+      if (ok) {
+        style(b, {
+          padding: "10px 12px", borderRadius: "3px", background: INSET,
+          boxShadow: "inset 3px 0 0 #75b022", fontSize: "12.5px"
+        });
+      }
+      b.appendChild(el("div", null, head));
+      var bad = arr(rejected);
+      if (bad.length) {
+        b.appendChild(el("div", "luaflipper-sub",
+          plural(bad.length, "entry", "entries") + " skipped:"));
+        bad.forEach(function (line) {
+          var e = el("div", "luaflipper-meta", text(line));
+          // Sentences, not a column value: .luaflipper-meta clips to one line.
+          e.style.whiteSpace = "normal";
+          b.appendChild(e);
+        });
+      }
+      note.style.display = "";
+      only(note, b);
+      return b;
+    }
+
     function addManifest(m) {
       // The backend matches a manifest by its file stem, so the raw id is what
       // /api/remove and /api/update have to be handed. appid() strips it to
@@ -2241,49 +2351,102 @@
         keys: num(m.keys), ids: num(m.ids), box: el("div")
       };
       rows.push(entry);
-      var box = entry.box;
-      listBox.appendChild(box);
+      var box = style(entry.box, { position: "relative" });
+      grid.appendChild(box);
 
-      var r = el("div", "luaflipper-row");
-      box.appendChild(r);
-
-      // Same rescue as the browse view's rows: anything Steam published after
-      // it moved store art behind hashed URLs 404s on the flat CDN path, and a
-      // library of recent additions would come up as a column of empty boxes.
-      var setters = [];
-      var cap = capsule(el, id, CAP, "46.58%", setters);
-      // A hand-named file has no app id to rescue art for, and asking anyway
-      // spends a request per row to be told so.
-      if (id) rescueArt(cap, id, setters[0]);
-      r.appendChild(slot(el, "120px", cap));
-
-      // The file name until a real one lands: always true, and it is what the
-      // user would see in the folder. Titled because the column clips.
-      // min-width 0 matters here. A flex item's automatic minimum size is its
-      // content, so this column refuses to shrink past a long game name and
-      // pushes the controls off the right edge: measured live, the Remove
-      // button's container was clipped to 97px against 250px of buttons and the
-      // page scrolled 117px sideways. The ellipsis needs this too, since it
-      // cannot engage on a column that never narrows.
-      // flex 1 1 auto, not the stylesheet's `flex: 1` (which is `1 1 0%`).
-      // Shrinking is weighted by base size, so a basis of 0 contributes nothing
-      // to absorbing negative space: the column kept its full width and pushed
-      // the controls off the right edge instead. min-width 0 is still needed for
-      // the ellipsis, since that cannot engage on a column that never narrows.
-      var label = style(el("span", "luaflipper-name", file), {
-        fontSize: "14px", minWidth: "0", flex: "1 1 auto"
+      // The library's own capsule: a 150% padding-top box so it holds a 2:3
+      // shape before any art arrives, and the shadow Steam puts under each one.
+      var cap = style(el("div"), {
+        position: "relative", paddingTop: "150%", borderRadius: "3px",
+        overflow: "hidden", background: INSET,
+        boxShadow: "rgba(0,0,0,0.5) 0 4px 8px 0",
+        transition: "transform 120ms ease, box-shadow 120ms ease"
       });
-      label.title = file;
-      r.appendChild(label);
+      box.appendChild(cap);
 
-      // Monospace and a fixed column, so the ids line up down a list this page
-      // exists to be scanned. LINK is the store's own colour for a value.
-      r.appendChild(style(el("span", "luaflipper-appid", raw || "?"), {
-        color: LINK, opacity: "1"
-      }));
+      var img = style(el("img"), {
+        position: "absolute", top: "0", left: "0", width: "100%",
+        height: "100%", objectFit: "cover", display: "block"
+      });
+      img.alt = "";
+      cap.appendChild(img);
 
-      var meta = el("span", "luaflipper-meta", "");
-      r.appendChild(meta);
+      // What stands in when there is no art, which is also what the library
+      // falls back to: the name on the capsule itself, centred, wrapping.
+      var plate = style(el("div", null, file), {
+        position: "absolute", top: "0", left: "0", right: "0", bottom: "0",
+        display: "none", alignItems: "center", justifyContent: "center",
+        padding: "12px", textAlign: "center", fontSize: "13px",
+        lineHeight: "1.35", wordBreak: "break-word"
+      });
+      cap.appendChild(plate);
+
+      function blank() {
+        img.style.display = "none";
+        plate.style.display = "flex";
+      }
+      // A hand-named file has no app id to fetch art for, and asking anyway
+      // spends a request per tile to be told so.
+      if (id) art(img, id, blank); else blank();
+
+      // A keyless manifest is the one state where the app is in the library and
+      // still cannot be played, so it is said on the tile rather than only in
+      // the panel that has to be hovered to be read.
+      var flag = style(el("div", null, "no keys"), {
+        position: "absolute", top: "6px", left: "6px", display: "none",
+        padding: "2px 6px", borderRadius: "2px", fontSize: "11px",
+        fontWeight: "bold", color: "#ffffff", background: "rgba(176,60,60,0.92)"
+      });
+      cap.appendChild(flag);
+
+      /* -------------------------------------------------------- panel --- */
+
+      // Over the art on hover, the way the library reveals its play controls.
+      // Everything the old row spelled out in columns lives here instead.
+      var panel = style(el("div"), {
+        position: "absolute", top: "0", left: "0", right: "0", bottom: "0",
+        display: "flex", flexDirection: "column", justifyContent: "flex-end",
+        gap: "6px", padding: "10px", opacity: "0", pointerEvents: "none",
+        transition: "opacity 120ms ease",
+        // Heavy enough to read small text over bright key art, which most of
+        // these capsules are. Measured against the worst case in the grid, a
+        // pastel capsule under an 11px key count.
+        background: "linear-gradient(to bottom, rgba(0,0,0,0) 22%, " +
+                    "rgba(0,0,0,0.72) 52%, rgba(0,0,0,0.94) 100%)"
+      });
+      cap.appendChild(panel);
+
+      var title = style(el("div", null, file), {
+        fontSize: "13px", fontWeight: "bold", color: "#ffffff",
+        lineHeight: "1.25", maxHeight: "3.75em", overflow: "hidden"
+      });
+      title.title = file;
+      panel.appendChild(title);
+
+      var meta = style(el("div"), { fontSize: "11px", opacity: "0.85" });
+      panel.appendChild(meta);
+
+      // Monospace and Steam's own colour for a value, so an id stays scannable
+      // against art of any brightness.
+      var idLine = style(el("div", "luaflipper-appid", raw || "?"), {
+        color: LINK, opacity: "1", fontSize: "11px"
+      });
+      panel.appendChild(idLine);
+
+      function hover(on) {
+        // A tile armed for removal keeps its panel: the pointer has to be able
+        // to travel from Remove to Confirm remove without the target vanishing.
+        if (!on && armed && armed.tile === box) return;
+        panel.style.opacity = on ? "1" : "0";
+        panel.style.pointerEvents = on ? "auto" : "none";
+        style(cap, {
+          transform: on ? "scale(1.03)" : "none",
+          boxShadow: on ? "rgba(0,0,0,0.65) 0 6px 14px 0"
+                        : "rgba(0,0,0,0.5) 0 4px 8px 0"
+        });
+      }
+      box.addEventListener("mouseenter", function () { hover(true); });
+      box.addEventListener("mouseleave", function () { hover(false); });
 
       function tally() {
         meta.textContent =
@@ -2295,29 +2458,27 @@
           "No decryption key in this manifest. Content downloads but cannot " +
           "be decrypted.";
         style(meta, {
-          color: entry.keys ? "" : "#e06a6a",
-          opacity: entry.keys ? "" : "1"
+          color: entry.keys ? "" : "#ff8a8a",
+          opacity: entry.keys ? "0.85" : "1"
         });
+        flag.style.display = entry.keys ? "none" : "block";
       }
       tally();
 
-      // Explicit basis rather than `auto`. Measured live, the container resolved
-      // to 97px while holding 250px of buttons, which clipped Remove off the
-      // row; stating the width leaves nothing to resolve.
       var controls = style(el("div"), {
-        display: "flex", alignItems: "center", gap: "6px", flex: "0 0 250px"
+        display: "flex", gap: "6px", marginTop: "2px"
       });
-      r.appendChild(controls);
+      panel.appendChild(controls);
 
       var btnCss = {
-        fontSize: "12.5px", lineHeight: "28px", padding: "0",
+        fontSize: "11.5px", lineHeight: "24px", padding: "0",
         borderRadius: "2px", textAlign: "center", width: "100%",
-        boxSizing: "border-box"
+        boxSizing: "border-box", fontWeight: "normal"
       };
-      // Fixed slots. Both labels change while a request runs, and a button that
-      // resizes under the pointer takes its neighbour out from under it.
-      var upSlot = style(el("div"), { flex: "0 0 112px" });
-      var rmSlot = style(el("div"), { flex: "0 0 132px" });
+      // Fixed halves. Both labels change while a request runs, and a button
+      // that resizes under the pointer takes its neighbour out from under it.
+      var upSlot = style(el("div"), { flex: "1 1 0" });
+      var rmSlot = style(el("div"), { flex: "1 1 0" });
       controls.appendChild(upSlot);
       controls.appendChild(rmSlot);
 
@@ -2327,50 +2488,15 @@
       // Two buttons swapped rather than one repainted: storeBtn closes over the
       // pair it was built with, so its own mouseleave would put an armed Remove
       // back to its resting fill the moment the pointer left it.
-      var rm = style(storeBtn(el, "Remove", DEEP, LIFT), btnCss);
-      var yes = style(storeBtn(el, "Confirm remove", RED, RED_HOT), btnCss);
+      // Not the page's usual DEEP secondary fill: that is a black wash, and it
+      // disappears into the gradient this button sits on, leaving Remove
+      // looking like a caption beside a real button. A light wash reads as a
+      // control against the art without committing to a colour a theme owns.
+      var rm = style(storeBtn(el, "Remove", "rgba(255,255,255,0.16)", LIFT), btnCss);
+      var yes = style(storeBtn(el, "Confirm", RED, RED_HOT), btnCss);
       yes.style.display = "none";
       rmSlot.appendChild(rm);
       rmSlot.appendChild(yes);
-
-      // Under the row rather than in it, so a long list of rejected entries
-      // cannot push the buttons around, and so a removal's receipt can stay
-      // exactly where the row it describes used to be.
-      var note = style(el("div"), { display: "none", margin: "0 0 8px" });
-      box.appendChild(note);
-
-      /*
-       * The outcome of an action.
-       *
-       * report() does this for the Unlocker but is closed over that renderer's
-       * own `el`, so calling it from here would mean editing the call sites it
-       * was signed off with. `rejected` shows on success too: it is the only
-       * explanation for a run that reported 200 and still skipped half the
-       * archive.
-       */
-      function say(ok, head, rejected) {
-        var b = el("div", ok ? null : "luaflipper-error");
-        if (ok) {
-          style(b, {
-            padding: "10px 12px", borderRadius: "3px", background: INSET,
-            boxShadow: "inset 3px 0 0 #75b022", fontSize: "12.5px"
-          });
-        }
-        b.appendChild(el("div", null, head));
-        var bad = arr(rejected);
-        if (bad.length) {
-          b.appendChild(el("div", "luaflipper-sub",
-            plural(bad.length, "entry", "entries") + " skipped:"));
-          bad.forEach(function (line) {
-            var e = el("div", "luaflipper-meta", text(line));
-            // Sentences, not a column value: .luaflipper-meta clips to one line.
-            e.style.whiteSpace = "normal";
-            b.appendChild(e);
-          });
-        }
-        note.style.display = "";
-        only(note, b);
-      }
 
       // A postscript on the message already showing, for something that went
       // wrong after the action itself succeeded.
@@ -2378,6 +2504,8 @@
         var b = note.firstChild;
         if (b) b.appendChild(el("div", "luaflipper-sub", line));
       }
+
+      function named() { return entry.name || file; }
 
       var busy = false;
 
@@ -2394,7 +2522,7 @@
 
       // The counts came from the list this page was drawn from, and an update
       // rewrites the file underneath them. Re-reading that list is the only way
-      // a row can stop claiming a key count the file on disk no longer has.
+      // a tile can stop claiming a key count the file on disk no longer has.
       function recount() {
         fetch(API + "manifests")
           .then(json)
@@ -2417,7 +2545,7 @@
 
       up.addEventListener("click", function () {
         if (busy) return;
-        // An update is a click somewhere other than an armed Confirm remove.
+        // An update is a click somewhere other than an armed Confirm.
         disarm();
         lock(true);
 
@@ -2428,10 +2556,9 @@
         // download short leaves half a pack on disk and blames the network.
         var started = Date.now();
         var tick = setInterval(function () {
-          up.textContent = "Updating " +
-            Math.round((Date.now() - started) / 1000) + "s";
+          up.textContent = Math.round((Date.now() - started) / 1000) + "s";
         }, 1000);
-        up.textContent = "Updating 0s";
+        up.textContent = "0s";
 
         // Back to a usable button on every path. An update that failed is worth
         // retrying, and one that worked can be run again later.
@@ -2446,8 +2573,9 @@
           .then(function (res) {
             stop();
             if (!res || typeof res !== "object") throw new Error("unreadable reply");
-            if (res.error) { say(false, text(res.error), res.rejected); return; }
-            say(true, "Re-downloaded " + plural(num(res.installed), "file") +
+            if (res.error) { say(false, named() + ": " + text(res.error), res.rejected); return; }
+            say(true, named() + ": re-downloaded " +
+                plural(num(res.installed), "file") +
                 ". Ownership is live immediately; depot keys need " +
                 "tools/sync_depot_keys.py run with Steam closed before this " +
                 "app's content will decrypt.", res.rejected);
@@ -2455,7 +2583,7 @@
           })
           .catch(function (e) {
             stop();
-            say(false, "Update failed: " + why(e), null);
+            say(false, named() + ": update failed: " + why(e), null);
           });
       });
 
@@ -2467,6 +2595,8 @@
         if (armTimer) { clearTimeout(armTimer); armTimer = null; }
         rm.style.display = "";
         yes.style.display = "none";
+        // The panel was being held open for the confirm; let it close normally.
+        hover(false);
       }
 
       // One click never removes anything. The second click is the removal, and
@@ -2477,7 +2607,7 @@
         rm.style.display = "none";
         yes.style.display = "";
         armTimer = setTimeout(disarm, 4000);
-        armed = { node: yes, off: unarm };
+        armed = { node: yes, tile: box, off: unarm };
       });
 
       yes.addEventListener("click", function () {
@@ -2491,7 +2621,7 @@
 
         function failed(msg) {
           lock(false);
-          yes.textContent = "Confirm remove";
+          yes.textContent = "Confirm";
           unarm();
           say(false, msg, null);
         }
@@ -2500,35 +2630,36 @@
           .then(json)
           .then(function (res) {
             if (!res || typeof res !== "object") throw new Error("unreadable reply");
-            if (res.error) { failed(text(res.error)); return; }
+            if (res.error) { failed(named() + ": " + text(res.error)); return; }
 
-            // The row goes, its receipt stays where the row was.
-            box.removeChild(r);
+            // The tile goes, and the grid closes over the gap.
+            grid.removeChild(box);
             entry.live = false;
             retally();
             refilter();
-            say(true, (entry.name || file) + " removed. The manifest was kept " +
+            say(true, named() + " removed. The manifest was kept " +
                 "as " + (text(res.kept) || (file + ".removed")) + " rather " +
                 "than deleted, because it holds the only copy of its depot " +
                 "keys: rename it back to .lua to put it back. Steam keeps the " +
                 "ownership until it restarts, since the loader has already " +
                 "read the file.", null);
           })
-          .catch(function (e) { failed("Remove failed: " + why(e)); });
+          .catch(function (e) { failed(named() + ": remove failed: " + why(e)); });
       });
 
       /* -------------------------------------------------------- name --- */
 
       // Only an all-digit stem is an app id. Anything else is a hand-named file
       // the store has never heard of, and asking about it spends a request per
-      // row to be told so.
+      // tile to be told so.
       if (raw && raw === id) {
         lookup(raw, function (name) {
           if (!name) return;
           entry.name = name;
-          label.textContent = name;
-          label.title = name;
-          // A name landing after the user has typed can bring its row into the
+          title.textContent = name;
+          title.title = name;
+          plate.textContent = name;
+          // A name landing after the user has typed can bring its tile into the
           // filter, so the filter is re-run rather than assumed still right.
           refilter();
         });
