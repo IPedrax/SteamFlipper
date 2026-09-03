@@ -54,11 +54,27 @@ namespace AppUpdater {
     struct SourceCheck {
         std::string sha;      // commit baked in at build time, or "unknown"
         std::string branch;   // branch baked in at build time, or "unknown"
+        std::string version;      // version this build was made from, e.g. "1.0.0"
+        std::string remoteVersion; // version in the branch's VERSION file
         std::string remote;   // short sha at the branch head, when reachable
         std::string message;  // first line of that commit's message
         bool behind = false;
         std::string reason;   // set when no comparison was possible
         std::string error;    // set when the lookup itself failed
+
+        // How the two commits actually relate, once a local clone is available
+        // to answer it: "current", "behind", "ahead", "diverged", or "" when the
+        // question could not be settled and `behind` is only "the head is not
+        // the commit this was built from".
+        //
+        // Worth the extra work because the cheap answer is wrong in a way users
+        // notice: a local history that has diverged reads as "behind", the panel
+        // offers an update, and the pull then refuses because there is no
+        // fast-forward. GitHub's compare API cannot settle it either, since the
+        // baked commit may exist only on this machine.
+        std::string relation;
+        int ahead = 0;        // commits this tree has that the branch head lacks
+        int behindBy = 0;     // commits the branch head has that this tree lacks
     };
 
     // Compare the baked-in commit against the branch head on GitHub. Network

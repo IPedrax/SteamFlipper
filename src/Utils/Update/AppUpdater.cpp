@@ -67,6 +67,36 @@ namespace {
 
     // The commit at the head of a branch. Public, unauthenticated, and the
     // reply's first two fields are the sha and the commit message.
+    // Raw file access, deliberately not the API: it is unauthenticated, has no
+    // 60-per-hour ceiling, and the VERSION file is one short line.
+    constexpr const char* kRawBase =
+        "https://raw.githubusercontent.com/IPedrax/SteamFlipper/";
+
+    std::string Trim(const std::string& s) {
+        const size_t a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos) return {};
+        return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+    }
+
+    // Numeric field-by-field, so 1.0.10 sorts above 1.0.9 where a string compare
+    // would not. Missing fields read as 0, making "1.1" and "1.1.0" equal.
+    // Returns <0 if a is older, 0 if equal, >0 if a is newer.
+    int CompareVersions(const std::string& a, const std::string& b) {
+        size_t i = 0, j = 0;
+        while (i < a.size() || j < b.size()) {
+            long x = 0, y = 0;
+            while (i < a.size() && isdigit(static_cast<unsigned char>(a[i])))
+                x = x * 10 + (a[i++] - '0');
+            while (j < b.size() && isdigit(static_cast<unsigned char>(b[j])))
+                y = y * 10 + (b[j++] - '0');
+            if (x != y) return x < y ? -1 : 1;
+            // Skip one separator on each side; anything non-numeric ends it.
+            if (i < a.size() && a[i] == '.') i++; else i = a.size();
+            if (j < b.size() && b[j] == '.') j++; else j = b.size();
+        }
+        return 0;
+    }
+
     constexpr const char* kCommitsApi =
         "https://api.github.com/repos/IPedrax/SteamFlipper/commits/";
 
@@ -342,8 +372,35 @@ std::string SelfPath()
 SourceCheck CheckSource()
 {
     SourceCheck c;
-    c.sha    = STEAMFLIPPER_GIT_SHA;
-    c.branch = STEAMFLIPPER_GIT_BRANCH;
+    c.sha     = STEAMFLIPPER_GIT_SHA;
+    c.branch  = STEAMFLIPPER_GIT_BRANCH;
+    c.version = STEAMFLIPPER_VERSION;
+
+    // Version first, because it is the thing a user is meant to reason about.
+    // The VERSION file is fetched raw rather than through the API: raw.github
+    // does not spend the 60-per-hour unauthenticated API budget, and the answer
+    // is the same one line that CMake baked into this build.
+    //
+    // A commit sha still works as a fallback for a build made between releases,
+    // but nobody has to look at one to know whether they are out of date.
+    {
+        const std::string branch =
+            (c.branch.empty() || c.branch == "unknown") ? "main" : c.branch;
+        const std::string url = std::string(kRawBase) + branch + "/VERSION";
+        const auto v = SFPlatform::Http::Execute(L"GET", url.c_str(), nullptr, 0,
+                                                 nullptr, 5000, 5000, 10000, 10000, 256);
+        if (v.ok && v.status == 200) {
+            c.remoteVersion = Trim(v.body);
+            const int cmp = CompareVersions(c.version, c.remoteVersion);
+            if (cmp < 0)      { c.relation = "behind";  c.behind = true;  }
+            else if (cmp > 0) { c.relation = "ahead";   c.behind = false; }
+            else              { c.relation = "current"; c.behind = false; }
+            LOG_INFO("AppUpdater: version {} vs {} on {} -> {}",
+                     c.version, c.remoteVersion, branch, c.relation);
+            return c;
+        }
+        LOG_WARN("AppUpdater: could not read VERSION from {}, falling back to the commit", branch);
+    }
 
     if (c.sha.empty() || c.sha == "unknown" || c.branch == "unknown") {
         c.sha = "unknown";
@@ -396,13 +453,43 @@ SourceCheck CheckSource()
     // cannot look different on the page.
     c.remote  = head.substr(0, c.sha.size() < 7 ? 7 : c.sha.size());
     c.message = FirstLine(JsonField(r.body, "message"));
-    // "differs from what this was built from" rather than a strict ancestry
-    // test: deciding direction needs the remote objects locally, which is a
-    // fetch, and this call is deliberately read-only.
+    // First pass: "differs from what this was built from". True whenever the two
+    // shas are not the same, which cannot tell behind from diverged.
     c.behind  = head.compare(0, c.sha.size(), c.sha) != 0;
 
-    LOG_INFO("AppUpdater: {}@{} vs origin {} -> {}", c.branch, c.sha, c.remote,
-             c.behind ? "update available" : "up to date");
+    // Second pass, when a clone is configured: settle the direction properly.
+    //
+    // GitHub's compare API would answer this in one call, but it cannot be used
+    // here: the baked commit may exist only on this machine and never have been
+    // pushed, so the API has no such ref. Ancestry has to come from a local
+    // clone, which means fetching the remote objects first.
+    //
+    // The fetch writes refs and objects into .git and touches neither the
+    // working tree nor HEAD, so it stays safe to run behind a status call.
+    const std::string repo = Config::GetUpdateRepo();
+    if (c.behind && !repo.empty()) {
+        std::string out;
+        if (RunGit(repo, "fetch --quiet origin " + c.branch, out) == 0) {
+            // left = commits we have that the head lacks, right = the reverse.
+            if (RunGit(repo, "rev-list --left-right --count HEAD...FETCH_HEAD", out) == 0) {
+                if (std::sscanf(out.c_str(), "%d %d", &c.ahead, &c.behindBy) == 2) {
+                    if (c.ahead == 0 && c.behindBy == 0)      c.relation = "current";
+                    else if (c.ahead == 0)                    c.relation = "behind";
+                    else if (c.behindBy == 0)                 c.relation = "ahead";
+                    else                                      c.relation = "diverged";
+                    // Only a clean fast-forward is an update the user can take.
+                    c.behind = (c.relation == "behind");
+                }
+            }
+        }
+        if (c.relation.empty())
+            LOG_WARN("AppUpdater: could not settle ancestry, reporting the sha difference only");
+    }
+
+    LOG_INFO("AppUpdater: {}@{} vs origin {} -> {} (ahead {}, behind {})",
+             c.branch, c.sha, c.remote,
+             c.relation.empty() ? (c.behind ? "differs" : "up to date") : c.relation,
+             c.ahead, c.behindBy);
     return c;
 }
 

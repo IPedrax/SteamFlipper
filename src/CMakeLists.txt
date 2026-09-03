@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(SteamFlipper VERSION 1.0.0 LANGUAGES C CXX)
+# The version lives in the VERSION file at the repo root, not here, so bumping a
+# release is editing one line of plain text. The updater fetches that same file
+# from the branch and compares it, which means the number shown in the client and
+# the number people compare against cannot drift apart.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" STEAMFLIPPER_VERSION_RAW)
+string(STRIP "${STEAMFLIPPER_VERSION_RAW}" STEAMFLIPPER_VERSION_RAW)
+project(SteamFlipper VERSION ${STEAMFLIPPER_VERSION_RAW} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
