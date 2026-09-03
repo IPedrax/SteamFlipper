@@ -7,6 +7,7 @@
 #include "Utils/Support/FnvHash.h"
 
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -391,24 +392,57 @@ void* FindPattern(SFPlatform::DynamicLibrary::ModuleHandle module, const char* f
     return nullptr;
 }
 
+/**
+ * The functions ownership injection genuinely needs.
+ *
+ * Mirrors REQUIRED["steamclient"] in tools/gen_linux_patterns.py, minus the two
+ * that are pinned per Steam build rather than derived. Everything else this
+ * codebase asks for belongs to features the Linux port does not carry -- IPC,
+ * the pipe, process spawning, runtime key injection, callback plumbing -- and
+ * their patterns have never been generated on any build.
+ *
+ * Keeping the two lists apart is the whole point. Reporting an expected absence
+ * as a fault sent a user to the issue tracker with eleven function names that
+ * were working exactly as designed, which is worse than saying nothing.
+ */
+bool RequiredForUnlock(const std::string& name)
+{
+    static const char* kRequired[] = {
+        "CheckAppOwnership", "BuildDepotDependency", "GetOrAddAppData",
+        "GetPackageInfo", "CUtlMemoryGrow", "CPackageInfoCacheGlobal",
+    };
+    for (const char* r : kRequired)
+        if (name == r) return true;
+    return false;
+}
+
 void ReportMissingFunctions()
 {
     if (g_missingFunctions.empty()) return;
 
-    // Build the list
-    std::string list;
+    std::string needed, optional;
     for (const auto& name : g_missingFunctions)
-        list += "  - " + name + "\n";
+        (RequiredForUnlock(name) ? needed : optional) += "  - " + name + "\n";
+    const size_t optionalCount = std::count(optional.begin(), optional.end(), '\n');
     g_missingFunctions.clear();
+
+    // The ones that cost nothing are logged and left there. A popup per launch
+    // listing them is how this turned into a bug report.
+    if (!optional.empty()) {
+        LOG_INFO("PatternLoader: {} function(s) not derived on Linux, which is "
+                 "expected and costs no unlocking:\n{}", optionalCount, optional);
+    }
+    if (needed.empty()) return;
 
     SteamDiagnostics::ShowWarning(
         "SteamFlipper - Missing Signatures",
-        "SteamFlipper: some functions could not be located.\n\n"
-        "The following functions were not found in the signature file:\n" +
-        list +
-        "\nHooks for these functions are disabled for this session.\n\n"
-        "Please report this at:\n"
-        "https://github.com/OpenSteam001/OpenSteamTool/issues");
+        "SteamFlipper: ownership injection is missing functions it needs.\n\n" +
+        needed +
+        "\nThis Steam build has not been calibrated. Close Steam and re-run\n"
+        "tools/install_linux.sh, which regenerates the patterns from your own\n"
+        "steamclient.so.\n\n"
+        "If that does not fix it, report it with the hash above at:\n"
+        "https://github.com/IPedrax/SteamFlipper/issues");
 }
 
 } // namespace PatternLoader
