@@ -159,50 +159,66 @@
         return;
       }
 
-      var code = el("input", "luaflipper-input");
-      code.type = "text";
-      code.placeholder = "code from /login";
-      code.maxLength = 12;
-      style(code, {
-        border: "0", borderRadius: "2px", background: "rgba(0,0,0,0.35)",
-        padding: "0 10px", height: "28px", width: "150px", fontSize: "13px",
-        textTransform: "uppercase", flex: "0 0 auto"
-      });
-      node.appendChild(code);
-
-      var go = dialogBtn(el, "Sign in");
-      node.appendChild(go);
-
       var said = style(el("div"), {
         flex: "0 0 auto", fontSize: "12px", color: "#e7a94a", maxWidth: "40%"
       });
+
+      /*
+       * Discord in the real browser, not a code to hunt for.
+       *
+       * The bot route works but starts with knowing to run /login with a bot in
+       * a Discord server, which is not something anyone finds unprompted. This
+       * is the other route their own client offers, and the module is the
+       * landing point: their Supabase accepts a loopback redirect, so the
+       * browser comes back to 127.0.0.1 and the session is saved there.
+       *
+       * Polling afterwards because the answer arrives in another process
+       * entirely; nothing in this window is told when the browser is done.
+       */
+      var go = dialogBtn(el, "Sign in with Discord");
+      node.appendChild(go);
       node.appendChild(said);
-      node.appendChild(link(el, "Get a code", "https://discord.gg/luatools"));
+
+      var poll = null;
+      function stopPolling() { if (poll) { clearInterval(poll); poll = null; } }
 
       go.addEventListener("click", function () {
-        var v = (code.value || "").trim();
-        if (!v) { said.textContent = "Run /login with their Discord bot first."; return; }
         go.busyLook(true);
-        go.textContent = "Signing in";
-        fetch(API + "fixes/login?code=" + encodeURIComponent(v))
+        go.textContent = "Waiting for Discord";
+        said.style.color = SET.desc;
+        said.textContent = "Authorise in the browser, then come back.";
+
+        fetch(API + "fixes/signin")
           .then(function (r) { return r.json(); })
           .then(function (res) {
-            go.busyLook(false);
-            go.textContent = "Sign in";
-            if (!res || res.error) {
-              said.textContent = text(res && res.error) || "Sign-in failed.";
-              return;
-            }
-            // Re-read rather than assume: what the session is worth is not
-            // local knowledge.
-            fetch(API + "fixes/account").then(function (r) { return r.json(); })
-              .then(function (a) { draw(a); if (onChange) onChange(); })
-              .catch(function () { draw({ signedIn: true }); if (onChange) onChange(); });
+            if (!res || !res.ok || !res.url) throw new Error("no sign-in url");
+            openUrl(text(res.url));
+            var tries = 0;
+            stopPolling();
+            poll = setInterval(function () {
+              tries++;
+              fetch(API + "fixes/account").then(function (r) { return r.json(); })
+                .then(function (a) {
+                  if (a && a.signedIn) {
+                    stopPolling();
+                    draw(a);
+                    if (onChange) onChange();
+                  } else if (tries > 60) {          // three minutes is plenty
+                    stopPolling();
+                    go.busyLook(false);
+                    go.textContent = "Sign in with Discord";
+                    said.style.color = "#e7a94a";
+                    said.textContent = "Gave up waiting. Try again.";
+                  }
+                })
+                .catch(skip);
+            }, 3000);
           })
           .catch(function (e) {
             go.busyLook(false);
-            go.textContent = "Sign in";
-            said.textContent = "Could not reach SteamFlipper: " + why(e);
+            go.textContent = "Sign in with Discord";
+            said.style.color = "#e7a94a";
+            said.textContent = "Could not start sign-in: " + why(e);
           });
       });
     }

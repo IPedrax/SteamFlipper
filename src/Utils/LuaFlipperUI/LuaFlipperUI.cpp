@@ -1394,6 +1394,150 @@ namespace {
         return access;
     }
 
+    /**
+     * Sign in through the browser, the way their own desktop client does.
+     *
+     * The Discord bot code works, but only if you know to run /login with a bot
+     * in a Discord server, which is a thing nobody finds on their own. This is
+     * the other route their client offers: Discord's normal authorise page in
+     * the real browser, and no code to copy.
+     *
+     * It works here because the module already runs a loopback server, so it
+     * can be the landing point. Verified against their Supabase before building
+     * it: authorize?redirect_to=http://127.0.0.1:1987/... comes back 302 to
+     * Discord with that redirect intact, so the project's allow-list permits it.
+     *
+     * PKCE, so the code that lands in the URL is worth nothing without the
+     * verifier, which never leaves this process.
+     */
+    std::string g_pkceVerifier;
+
+    // The redirect goes in a query string, so it is escaped there.
+    std::string UrlEncodeUi(const std::string& in) {
+        static const char* hex = "0123456789ABCDEF";
+        std::string out;
+        for (unsigned char c : in) {
+            if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                out += static_cast<char>(c);
+            } else {
+                out += '%';
+                out += hex[c >> 4];
+                out += hex[c & 0x0F];
+            }
+        }
+        return out;
+    }
+
+    std::string Base64Url(const std::string& raw) {
+        static const char* abc =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        std::string out;
+        for (size_t i = 0; i < raw.size(); i += 3) {
+            const unsigned a = static_cast<unsigned char>(raw[i]);
+            const unsigned b = i + 1 < raw.size() ? static_cast<unsigned char>(raw[i+1]) : 0;
+            const unsigned c = i + 2 < raw.size() ? static_cast<unsigned char>(raw[i+2]) : 0;
+            const unsigned n = (a << 16) | (b << 8) | c;
+            out += abc[(n >> 18) & 63];
+            out += abc[(n >> 12) & 63];
+            if (i + 1 < raw.size()) out += abc[(n >> 6) & 63];
+            if (i + 2 < raw.size()) out += abc[n & 63];
+        }
+        return out;   // no padding, which is what base64url wants here
+    }
+
+    std::string HexToRaw(const std::string& hex) {
+        std::string out;
+        for (size_t i = 0; i + 1 < hex.size(); i += 2)
+            out += static_cast<char>(strtoul(hex.substr(i, 2).c_str(), nullptr, 16));
+        return out;
+    }
+
+    /** The URL to open, and the verifier kept behind for the exchange. */
+    std::string JsonFixesSignIn() {
+        // Random enough for a one-shot verifier: the value only has to be
+        // unguessable for the seconds between opening the browser and the
+        // redirect coming back.
+        std::string seed = std::to_string(SteadyMs()) + "|" +
+                           std::to_string(reinterpret_cast<uintptr_t>(&seed)) + "|" +
+                           std::to_string(::getpid());
+        {
+            std::ifstream ur("/dev/urandom", std::ios::binary);
+            if (ur) { char b[32]; ur.read(b, sizeof(b)); seed.append(b, ur.gcount()); }
+        }
+        const std::string verifier =
+            Base64Url(HexToRaw(SFPlatform::Hash::Sha256OfBuffer(seed.data(), seed.size())));
+        const std::string challenge = Base64Url(HexToRaw(
+            SFPlatform::Hash::Sha256OfBuffer(verifier.data(), verifier.size())));
+
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            g_pkceVerifier = verifier;
+        }
+
+        const std::string redirect = "http://127.0.0.1:1987/api/fixes/callback";
+        std::string url = std::string(kSupabase) +
+            "/auth/v1/authorize?provider=discord&redirect_to=" + UrlEncodeUi(redirect) +
+            "&code_challenge=" + challenge + "&code_challenge_method=s256";
+        return "{\"ok\":true,\"url\":\"" + JsonEscape(url) + "\"}";
+    }
+
+    /** Where the browser lands once Discord is done. */
+    std::string JsonFixesCallback(const std::string& fullPath) {
+        auto page = [](const std::string& head, const std::string& body) {
+            return "<html><head><meta charset=\"utf-8\"><title>LUAFlipper</title>"
+                   "</head><body style=\"background:#1b2838;color:#dcdedf;"
+                   "font:15px/1.5 Arial,sans-serif;padding:56px;text-align:center\">"
+                   "<h2 style=\"color:#66c0f4\">" + head + "</h2><p>" + body +
+                   "</p></body></html>";
+        };
+
+        const std::string err = QueryParam(fullPath, "error_description");
+        if (!err.empty())
+            return page("Sign-in was refused", JsonEscape(err));
+
+        const std::string code = QueryParam(fullPath, "code");
+        if (code.empty())
+            return page("Nothing to exchange",
+                        "Discord sent no code back. Close this and try again.");
+
+        std::string verifier;
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            verifier = g_pkceVerifier;
+            g_pkceVerifier.clear();      // one shot
+        }
+        if (verifier.empty())
+            return page("This link has expired",
+                        "Start the sign-in from the LUAFlipper tab again.");
+
+        const std::string anon(kSupabaseAnon);
+        auto r = PostJson(std::string(kSupabase) + "/auth/v1/token?grant_type=pkce",
+                          "{\"auth_code\":\"" + JsonEscape(code) +
+                          "\",\"code_verifier\":\"" + JsonEscape(verifier) + "\"}",
+                          std::wstring(L"apikey: ") +
+                          std::wstring(anon.begin(), anon.end()) + L"\r\n");
+        if (!r.ok || r.status != 200)
+            return page("The session was refused",
+                        "lua.tools would not exchange that sign-in.");
+
+        const std::string refresh = JsonString(r.body, "refresh_token");
+        const std::string access  = JsonString(r.body, "access_token");
+        if (refresh.empty())
+            return page("No session came back", "Try again from the LUAFlipper tab.");
+
+        std::string werr;
+        WriteConfigKey("fixes", "refresh_token", TomlString(refresh), werr);
+        {
+            std::lock_guard<std::mutex> lock(g_sessionLock);
+            g_accessToken = access;
+            const long long ttl = JsonNumber(r.body, "expires_in");
+            g_accessExpires = SteadyMs() + (ttl > 0 ? ttl : 3600) * 1000;
+        }
+        LOG_INFO("LuaFlipperUI: signed in to lua.tools through the browser");
+        return page("Signed in",
+                    "You can close this tab and go back to Steam.");
+    }
+
     /** Redeem a Discord bot code into a session, and keep the durable half. */
     std::string JsonFixesLogin(const std::string& fullPath) {
         std::string code = QueryParam(fullPath, "code");
@@ -2119,6 +2263,8 @@ namespace {
         if (path == "/api/hubcap/save")  return JsonHubcapSave(fullPath);
         if (path == "/api/sources/order") return JsonSourcesSave(fullPath);
 
+        if (path == "/api/fixes/signin")   return JsonFixesSignIn();
+        if (path == "/api/fixes/callback") return JsonFixesCallback(fullPath);
         if (path == "/api/fixes/login")   return JsonFixesLogin(fullPath);
         if (path == "/api/fixes/logout")  return JsonFixesLogout();
         if (path == "/api/fixes/account") return JsonFixesAccount();
@@ -2253,9 +2399,14 @@ namespace {
 
                 const std::string body = RouteApi(path);
                 const bool found = !body.empty();
+                // The OAuth callback is the one route a browser lands on
+                // directly rather than fetches, so it answers HTML. Everything
+                // else is JSON for the UI.
+                const bool html = body.compare(0, 6, "<html>") == 0;
                 std::string resp =
                     std::string("HTTP/1.1 ") + (found ? "200 OK" : "404 Not Found") +
-                    "\r\nContent-Type: application/json\r\n"
+                    (html ? "\r\nContent-Type: text/html; charset=utf-8\r\n"
+                          : "\r\nContent-Type: application/json\r\n") +
                     // The UI runs on steamloopback.host, so every call here is
                     // cross-origin; without this the browser blocks the response
                     // and the page reports a fetch failure even though the
