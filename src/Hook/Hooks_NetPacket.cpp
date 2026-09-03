@@ -8,6 +8,7 @@
 #include "Utils/Tickets/EticketClient.h"
 #include "Utils/Support/FnvHash.h"
 #include "Utils/CloudRedirect/CloudRedirectHost.h"
+#include "Utils/CloudSaves/CloudSaves.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -1107,7 +1108,13 @@ namespace Hooks_NetPacket_Cloud {
                     const uint8* pBody, uint32 cbBody,
                     const uint8* pHdr, uint32 cbHdr)
     {
-        if (!CloudRedirectHost::IsActive()) return false;
+        // CloudSaves, not CloudRedirectHost. The latter never activates on Linux
+        // (its released library exports no host API there), so this guard used to
+        // return on the first line and nothing below it ever ran: the client's
+        // upload went to Valve, which refused it with Access Denied because the
+        // account does not own the app. The IsApp gate below was already moved
+        // over; this is the one that actually stopped the path.
+        if (!CloudSaves::IsActive()) return false;
 
         CMsgProtoBufHeader reqHdr;
         if (!reqHdr.ParseFromArray(pHdr, cbHdr)) return false;
@@ -1115,14 +1122,17 @@ namespace Hooks_NetPacket_Cloud {
             g_localSteamId = reqHdr.steamid();
 
         const uint32 appId = ExtractAppId(jobName, pBody, cbBody);
-        if (appId == 0 || !CloudRedirectHost::IsApp(appId)) return false;
+        // Gated on CloudSaves, not CloudRedirectHost: the latter is inactive on
+        // Linux (its library exports no host API there), so asking it would
+        // reject every app and the RPCs below would never run.
+        if (appId == 0 || !CloudSaves::IsApp(appId)) return false;
 
         const uint32 accountId = static_cast<uint32>(g_localSteamId & 0xFFFFFFFFull);
 
         static thread_local uint8 respBuf[kMaxBodySize];
         uint32  respLen  = 0;
         int32_t eresult  = 2;   // EResult::Fail
-        if (!CloudRedirectHost::HandleCloudRpc(jobName, appId, accountId,
+        if (!CloudSaves::HandleRpc(jobName, appId, accountId,
                                                pBody, cbBody,
                                                respBuf, static_cast<uint32_t>(sizeof(respBuf)),
                                                &respLen, &eresult)) {

@@ -2,6 +2,7 @@
 #include "Utils/Config/LuaFileWatcher.h"
 #include "Utils/Config/LuaConfig.h"
 #include "Utils/CloudRedirect/CloudRedirectHost.h"
+#include "Utils/CloudSaves/CloudSaves.h"
 #include "Utils/Logging/Log.h"
 #include "SFPlatform/include/DirectoryWatch.h"
 
@@ -122,6 +123,7 @@ void ProcessChanges(const std::vector<FileChange>& changes) {
 
     Hooks_Package::NotifyLicenseChanged();
     CloudRedirectHost::SyncAppSet();
+    CloudSaves::SyncAppSet();
     LOG_PACKAGE_DEBUG("Lua refresh completed");
 }
 

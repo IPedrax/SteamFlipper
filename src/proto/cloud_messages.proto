@@ -1,0 +1,158 @@
+// proto/cloud_messages.proto
+// Steam Cloud service messages — only the subset SteamFlipper's native cloud
+// save backend (Utils/CloudSaves) parses or produces.
+//
+// Field numbers and types are the client's own, taken from the public
+// steammessages_cloud definitions of the "Cloud" unified service. They are wire
+// contract, not a local choice: renumber one and the Steam client silently
+// fails to parse the reply. Fields the backend never reads are omitted rather
+// than renumbered, which is why the numbering has holes.
+
+syntax = "proto2";
+
+// ============================================================
+// Cloud.ClientBeginFileUpload#1
+// ============================================================
+message CCloud_ClientBeginFileUpload_Request {
+	optional uint32 appid = 1;
+	optional uint32 file_size = 2;
+	optional uint32 raw_file_size = 3;
+	optional bytes file_sha = 4;
+	optional uint64 time_stamp = 5;
+	optional string filename = 6;
+	optional uint32 platforms_to_sync = 7 [default = 4294967295];
+	optional uint64 upload_batch_id = 13;
+}
+
+// One HTTP transfer the client must perform before it may commit the file.
+// Omitting request_headers (5) and explicit_body_data (8) is deliberate: the
+// loopback endpoint needs neither.
+message ClientCloudFileUploadBlockDetails {
+	optional string url_host = 1;
+	optional string url_path = 2;
+	optional bool use_https = 3;
+	optional int32 http_method = 4;
+	optional uint64 block_offset = 6;
+	optional uint32 block_length = 7;
+	optional bool may_parallelize = 9;
+}
+
+message CCloud_ClientBeginFileUpload_Response {
+	optional bool encrypt_file = 1;
+	repeated ClientCloudFileUploadBlockDetails block_requests = 2;
+}
+
+// ============================================================
+// Cloud.ClientCommitFileUpload#1
+// ============================================================
+message CCloud_ClientCommitFileUpload_Request {
+	optional bool transfer_succeeded = 1;
+	optional uint32 appid = 2;
+	optional bytes file_sha = 3;
+	optional string filename = 4;
+}
+
+message CCloud_ClientCommitFileUpload_Response {
+	optional bool file_committed = 1;
+}
+
+// ============================================================
+// Cloud.ClientFileDownload#1
+// ============================================================
+message CCloud_ClientFileDownload_Request {
+	optional uint32 appid = 1;
+	optional string filename = 2;
+	optional uint32 realm = 3;
+}
+
+message CCloud_ClientFileDownload_Response {
+	optional uint32 appid = 1;
+	optional uint32 file_size = 2;
+	optional uint32 raw_file_size = 3;
+	optional bytes sha_file = 4;
+	optional uint64 time_stamp = 5;
+	optional bool is_explicit_delete = 6;
+	optional string url_host = 7;
+	optional string url_path = 8;
+	optional bool use_https = 9;
+	optional bool encrypted = 11;
+}
+
+// ============================================================
+// Cloud.ClientDeleteFile#1  (response is empty, so it has no message here)
+// ============================================================
+message CCloud_ClientDeleteFile_Request {
+	optional uint32 appid = 1;
+	optional string filename = 2;
+	optional bool is_explicit_delete = 3;
+	optional uint64 upload_batch_id = 4;
+}
+
+// ============================================================
+// Cloud.GetAppFileChangelist#1
+// ============================================================
+message CCloud_AppFileInfo {
+	optional string file_name = 1;
+	optional bytes sha_file = 2;
+	optional uint64 time_stamp = 3;
+	optional uint32 raw_file_size = 4;
+	// ECloudStoragePersistState: 0 = Persisted, 1 = Forgotten, 2 = Deleted.
+	// Declared as uint32 because an open enum and a varint are the same bytes
+	// on the wire and this saves importing enums.proto for three constants.
+	optional uint32 persist_state = 5 [default = 0];
+	optional uint32 platforms_to_sync = 6;
+	optional uint32 path_prefix_index = 7;
+	optional uint32 machine_name_index = 8;
+}
+
+message CCloud_GetAppFileChangelist_Request {
+	optional uint32 appid = 1;
+	optional uint64 synced_change_number = 2;
+}
+
+message CCloud_GetAppFileChangelist_Response {
+	optional uint64 current_change_number = 1;
+	repeated CCloud_AppFileInfo files = 2;
+	optional bool is_only_delta = 3;
+	repeated string path_prefixes = 4;
+	repeated string machine_names = 5;
+	optional uint64 app_buildid_hwm = 6;
+}
+
+// ============================================================
+// Cloud.ClientGetAppQuotaUsage#1
+// ============================================================
+message CCloud_ClientGetAppQuotaUsage_Request {
+	optional uint32 appid = 1;
+}
+
+message CCloud_ClientGetAppQuotaUsage_Response {
+	optional uint32 existing_files = 1;
+	optional uint64 existing_bytes = 2;
+	optional uint32 max_num_files = 3;
+	optional uint64 max_num_bytes = 4;
+}
+
+// ============================================================
+// Cloud.BeginAppUploadBatch#1 / Cloud.CompleteAppUploadBatchBlocking#1
+// ============================================================
+message CCloud_BeginAppUploadBatch_Request {
+	optional uint32 appid = 1;
+	optional string machine_name = 2;
+	repeated string files_to_upload = 3;
+	repeated string files_to_delete = 4;
+	optional uint64 client_id = 5;
+	optional uint64 app_build_id = 6;
+}
+
+// Field 4 really is 4: the upstream message has no fields 2 or 3.
+message CCloud_BeginAppUploadBatch_Response {
+	optional uint64 batch_id = 1;
+	optional uint64 app_change_number = 4;
+}
+
+message CCloud_CompleteAppUploadBatch_Request {
+	optional uint32 appid = 1;
+	optional uint64 batch_id = 2;
+	optional uint32 batch_eresult = 3;
+}
