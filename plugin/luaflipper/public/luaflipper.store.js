@@ -191,8 +191,13 @@
       function done(s) { clearInterval(tick); label.textContent = s; }
       function retry(s) { done(s); busy = false; }
 
+      // The bridge hands back the reply as a value, not as text: the module
+      // pushes it in as a JSON literal, so it arrives already parsed. Running
+      // JSON.parse over an object stringifies it to "[object Object]" first and
+      // then throws, which read back here as every source being unavailable.
       function parse(body) {
         if (!body) return null;
+        if (typeof body === "object") return body;
         try { return JSON.parse(body); } catch (e) { return null; }
       }
 

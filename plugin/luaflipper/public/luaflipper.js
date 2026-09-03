@@ -382,8 +382,36 @@
     }
   }
 
-  function stockContent() {
-    return document.querySelector(".LocalContentContainer");
+  /**
+   * Take over the content area, and give it back exactly as it was.
+   *
+   * Steam switches its own views by writing display straight onto the element:
+   * LocalContentContainer holds the routed React pages, BrowserWrapper holds the
+   * web views, and whichever is not current carries an inline display:none. Both
+   * stay mounted either way.
+   *
+   * So restoring means putting back the value that was there, not blanking it.
+   * Blanking un-hides whatever Steam had hidden, which is what left a strip of a
+   * stale page sitting above the open tab: the store route keeps the last
+   * library render mounted underneath, and clearing the inline none showed it.
+   */
+  var STOCK_VIEWS = ".LocalContentContainer, .BrowserWrapper";
+  var hiddenStock = [];
+
+  function hideStock() {
+    restoreStock();
+    var els = document.querySelectorAll(STOCK_VIEWS);
+    for (var i = 0; i < els.length; i++) {
+      hiddenStock.push({ el: els[i], display: els[i].style.display });
+      els[i].style.display = "none";
+    }
+  }
+
+  function restoreStock() {
+    for (var i = 0; i < hiddenStock.length; i++) {
+      hiddenStock[i].el.style.display = hiddenStock[i].display;
+    }
+    hiddenStock = [];
   }
 
   /**
@@ -434,8 +462,7 @@
   function closePage() {
     var p = document.getElementById(PAGE_ID);
     if (p) p.remove();
-    var stock = stockContent();
-    if (stock) stock.style.display = "";
+    restoreStock();
     // Leaving our tab must put the store back, whether or not it was ours.
     if (currentPage === "unlocker") holdUnlockerMode(false);
     currentPage = null;
@@ -449,7 +476,6 @@
    */
   function openPage(page) {
     var frame = document.querySelector(".ContentFrame");
-    var stock = stockContent();
     if (!frame) { log("ContentFrame not found; cannot open page"); return; }
 
     closePage();
@@ -482,7 +508,10 @@
       return;
     }
 
-    if (stock) stock.style.display = "none";
+    // Both of Steam's views, not just the routed one: on the store route the
+    // browser view is what is showing, and hiding only the React container
+    // would leave the store visible under our page.
+    hideStock();
     currentPage = page;
     takeHighlight();
 
