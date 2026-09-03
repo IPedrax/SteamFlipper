@@ -10,7 +10,13 @@ project(SteamFlipper VERSION ${STEAMFLIPPER_VERSION_RAW} LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
-set(STEAMFLIPPER_VERSION "${PROJECT_VERSION}" CACHE STRING "Version string embedded into SteamFlipper")
+# FORCE, because this is derived from the VERSION file rather than a knob. A
+# plain CACHE entry is written once and then never updated, so the first
+# configure pinned the number forever: editing VERSION bumped the file, the tag
+# and the updater's idea of the release while the client kept reporting the old
+# one, with a rebuild that looked like it had worked.
+set(STEAMFLIPPER_VERSION "${PROJECT_VERSION}" CACHE STRING
+    "Version string embedded into SteamFlipper" FORCE)
 
 # Allow CMAKE_MSVC_RUNTIME_LIBRARY to control runtime selection for all targets,
 # including dependencies pulled in via FetchContent.
