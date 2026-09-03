@@ -111,6 +111,41 @@
   }
 
   /**
+   * Start the browser sign-in and watch for it to land.
+   *
+   * Shared because the place someone discovers they need an account is rarely
+   * the place the sign-in lives: it is usually the download button, two pages
+   * away from the row that explains it. `note` is called with progress text,
+   * `done` once the session exists.
+   *
+   * Polling because the answer arrives in another process; nothing in this
+   * window is told when the browser is finished.
+   */
+  function startDiscordSignIn(note, done) {
+    note("Authorise in the browser, then come back.");
+    fetch(API + "fixes/signin")
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok || !res.url) throw new Error("no sign-in url");
+        openUrl(text(res.url));
+        var tries = 0;
+        var poll = setInterval(function () {
+          tries++;
+          fetch(API + "fixes/account").then(function (r) { return r.json(); })
+            .then(function (a) {
+              if (a && a.signedIn) { clearInterval(poll); done(a); }
+              else if (tries > 60) {            // three minutes
+                clearInterval(poll);
+                note("Gave up waiting. Try again.");
+              }
+            })
+            .catch(skip);
+        }, 3000);
+      })
+      .catch(function (e) { note("Could not start sign-in: " + why(e)); });
+  }
+
+  /**
    * The lua.tools sign-in, shared by every page that needs one.
    *
    * Their catalog is free and their downloads are not: fixes and the proxied
@@ -179,47 +214,20 @@
       node.appendChild(go);
       node.appendChild(said);
 
-      var poll = null;
-      function stopPolling() { if (poll) { clearInterval(poll); poll = null; } }
-
       go.addEventListener("click", function () {
         go.busyLook(true);
         go.textContent = "Waiting for Discord";
         said.style.color = SET.desc;
-        said.textContent = "Authorise in the browser, then come back.";
-
-        fetch(API + "fixes/signin")
-          .then(function (r) { return r.json(); })
-          .then(function (res) {
-            if (!res || !res.ok || !res.url) throw new Error("no sign-in url");
-            openUrl(text(res.url));
-            var tries = 0;
-            stopPolling();
-            poll = setInterval(function () {
-              tries++;
-              fetch(API + "fixes/account").then(function (r) { return r.json(); })
-                .then(function (a) {
-                  if (a && a.signedIn) {
-                    stopPolling();
-                    draw(a);
-                    if (onChange) onChange();
-                  } else if (tries > 60) {          // three minutes is plenty
-                    stopPolling();
-                    go.busyLook(false);
-                    go.textContent = "Sign in with Discord";
-                    said.style.color = "#e7a94a";
-                    said.textContent = "Gave up waiting. Try again.";
-                  }
-                })
-                .catch(skip);
-            }, 3000);
-          })
-          .catch(function (e) {
-            go.busyLook(false);
-            go.textContent = "Sign in with Discord";
-            said.style.color = "#e7a94a";
-            said.textContent = "Could not start sign-in: " + why(e);
-          });
+        startDiscordSignIn(
+          function (msg) {
+            said.textContent = msg;
+            if (/Gave up|Could not/.test(msg)) {
+              said.style.color = "#e7a94a";
+              go.busyLook(false);
+              go.textContent = "Sign in with Discord";
+            }
+          },
+          function (a) { draw(a); if (onChange) onChange(); });
       });
     }
 
@@ -421,39 +429,146 @@
       if (!fix.hasFix) get.busyLook(true);
       foot.appendChild(get);
 
-      get.addEventListener("click", function () {
-        if (!fix.hasFix) return;
+      /*
+       * Sign in from here, rather than being told to go and find it.
+       *
+       * This is where anyone discovers they need an account: they came to get a
+       * file and the button refused. Sending them to a row on another page to
+       * do something and then come back is two navigations and a lost place in
+       * the list, so the same browser sign-in runs from the modal and the
+       * download resumes itself when it lands.
+       */
+      function offerSignIn(message) {
+        said.style.color = "#e7a94a";
+        said.textContent = message;
+        get.busyLook(true);
+        get.textContent = "Download fix";
+
+        var inBtn = dialogBtn(el, "Sign in with Discord");
+        style(inBtn, { flex: "0 0 auto" });
+        foot.insertBefore(inBtn, get);
+
+        inBtn.addEventListener("click", function () {
+          inBtn.busyLook(true);
+          inBtn.textContent = "Waiting for Discord";
+          said.style.color = SET.desc;
+          startDiscordSignIn(
+            function (msg) {
+              said.textContent = msg;
+              if (/Gave up|Could not/.test(msg)) {
+                said.style.color = "#e7a94a";
+                inBtn.busyLook(false);
+                inBtn.textContent = "Sign in with Discord";
+              }
+            },
+            function () {
+              if (inBtn.parentNode) inBtn.parentNode.removeChild(inBtn);
+              said.style.color = "#a4d007";
+              said.textContent = "Signed in. Fetching the fix...";
+              get.busyLook(false);
+              busy = false;
+              download();          // pick up where the refusal left off
+            });
+        });
+      }
+
+      /*
+       * Offer the one step that can be automated, and only that.
+       *
+       * Fixes do not share a way in. Most open with "extract the archive into
+       * the game folder", and that step is mechanical: the folder is one Steam
+       * chose, possibly on another drive, and finding it by hand is the tedious
+       * part. The rest of what a fix asks for is prose that differs per release,
+       * so this button says what it does and the instructions stay above it,
+       * unchanged, as the thing to follow.
+       *
+       * Offered only once the folder is known, so it never appears for a game
+       * that is not installed.
+       */
+      function offerExtract(file, dir) {
+        var put = dialogBtn(el, "Extract to game folder");
+        style(put, { flex: "0 0 auto" });
+        put.title = dir;
+        foot.insertBefore(put, get);
+
+        put.addEventListener("click", function () {
+          put.busyLook(true);
+          put.textContent = "Extracting";
+          fetch(API + "fixes/apply?appid=" + encodeURIComponent(text(appId)) +
+                "&name=" + encodeURIComponent(file))
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              if (!res || res.error) {
+                put.busyLook(false);
+                put.textContent = "Try again";
+                said.style.color = "#e7a94a";
+                said.textContent = text(res && res.error) || "Could not extract it.";
+                return;
+              }
+              put.textContent = "Extracted";
+              said.style.color = "#a4d007";
+              // What landed and what is still owed. An archive carrying an
+              // installer is the case where "extracted" reads as finished and
+              // is not, so that one is named.
+              var run = arr(res.runnable);
+              said.textContent = "Extracted " + num(res.applied) + " files to " +
+                text(res.dir) +
+                (num(res.backed) ? ". The files it replaced were kept as .sfbak"
+                                 : "") + ". " +
+                (run.length
+                  ? "The archive includes " + run.join(", ") +
+                    " - check the instructions above before running anything."
+                  : "Anything else the instructions ask for is still yours to do.");
+            })
+            .catch(function (e) {
+              put.busyLook(false);
+              put.textContent = "Try again";
+              said.style.color = "#e7a94a";
+              said.textContent = "Could not reach SteamFlipper: " + why(e);
+            });
+        });
+      }
+
+      var busy = false;
+
+      function download() {
+        if (!fix.hasFix || busy) return;
+        busy = true;
         get.busyLook(true);
         get.textContent = "Downloading";
         said.textContent = "";
         fetch(API + "fixes/download?fix=" + encodeURIComponent(text(fix.id)) +
-              "&slot=fix&name=" + encodeURIComponent(text(fix.fixFilename)))
+              "&slot=fix&appid=" + encodeURIComponent(text(appId)) +
+              "&name=" + encodeURIComponent(text(fix.fixFilename)))
           .then(function (r) { return r.json(); })
           .then(function (res) {
             get.busyLook(false);
+            busy = false;
             if (!res || typeof res !== "object") throw new Error("unreadable reply");
+            if (res.needsLogin) { offerSignIn(text(res.error)); return; }
             if (res.error) {
-              get.textContent = (res.needsToken || res.needsLogin)
-                ? "Download fix" : "Try again";
+              get.textContent = res.needsToken ? "Download fix" : "Try again";
               said.textContent = text(res.error);
               said.style.color = "#e7a94a";
               return;
             }
-            get.textContent = "Downloaded";
             get.busyLook(true);
+            get.textContent = "Downloaded";
             said.style.color = "#a4d007";
-            // Where it landed, not "done". The archive still has to be applied
-            // by hand, and the instructions above say where.
             said.textContent = "Saved " + bytes(num(res.bytes)) + " to " +
               text(res.path) + ". Apply it as the instructions above describe.";
+            if (res.gameDir) offerExtract(text(res.file), text(res.gameDir));
           })
           .catch(function (e) {
             get.busyLook(false);
+            busy = false;
             get.textContent = "Try again";
             said.style.color = "#e7a94a";
             said.textContent = "Could not reach SteamFlipper: " + why(e);
           });
-      });
+      }
+
+      get.addEventListener("click", download);
 
       function close() {
         if (back.parentNode) back.parentNode.removeChild(back);

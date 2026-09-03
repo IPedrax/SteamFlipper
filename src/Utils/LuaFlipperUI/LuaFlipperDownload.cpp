@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -717,6 +719,213 @@ std::string Install(const std::string& appId, const std::string& source,
     (void)appId;
     (void)source;
     (void)steamPath;
+    return JsonError("unsupported platform");
+#endif
+}
+
+namespace {
+
+/**
+ * Value of the next "key" "value" pair in a Valve KeyValues document.
+ *
+ * `at` walks forward, so repeated calls enumerate every occurrence, which is
+ * what libraryfolders.vdf needs: it holds one "path" per library. Not a
+ * KeyValues parser -- it does not know about nesting, and would happily read a
+ * "path" belonging to something else. It is enough for the two documents it is
+ * pointed at, which have one key of each name per block, and every candidate it
+ * produces is checked against the filesystem before it is used.
+ */
+std::string VdfValue(const std::string& doc, const std::string& key, size_t& at) {
+    const std::string needle = "\"" + key + "\"";
+    const size_t k = doc.find(needle, at);
+    if (k == std::string::npos) { at = doc.size(); return {}; }
+    const size_t q = doc.find('"', k + needle.size());
+    if (q == std::string::npos) { at = doc.size(); return {}; }
+    const size_t e = doc.find('"', q + 1);
+    if (e == std::string::npos) { at = doc.size(); return {}; }
+    at = e + 1;
+    return doc.substr(q + 1, e - q - 1);
+}
+
+std::string ReadAll(const fs::path& p) {
+    std::ifstream f(p);
+    return std::string((std::istreambuf_iterator<char>(f)),
+                       std::istreambuf_iterator<char>());
+}
+
+} // namespace
+
+std::string GameDir(const std::string& appId, const std::string& steamPath) {
+#if defined(__linux__)
+    // The Steam root is a library itself and is not listed as one in every
+    // install, so it goes in first rather than being waited for.
+    std::vector<fs::path> roots{ steamPath };
+    {
+        const std::string doc =
+            ReadAll(fs::path(steamPath) / "steamapps" / "libraryfolders.vdf");
+        for (size_t at = 0;;) {
+            const std::string path = VdfValue(doc, "path", at);
+            if (path.empty()) break;
+            if (std::find(roots.begin(), roots.end(), fs::path(path)) == roots.end())
+                roots.push_back(path);
+        }
+    }
+
+    std::error_code ec;
+    for (const fs::path& root : roots) {
+        const fs::path acf =
+            root / "steamapps" / ("appmanifest_" + appId + ".acf");
+        if (!fs::exists(acf, ec)) continue;
+        const std::string doc = ReadAll(acf);
+        size_t at = 0;
+        const std::string installdir = VdfValue(doc, "installdir", at);
+        if (installdir.empty()) continue;
+        // The manifest can outlive the files: an interrupted move leaves the acf
+        // behind on the source library, so the directory is what decides.
+        const fs::path dir = root / "steamapps" / "common" / installdir;
+        if (fs::is_directory(dir, ec)) return dir.string();
+    }
+    return {};
+#else
+    (void)appId;
+    (void)steamPath;
+    return {};
+#endif
+}
+
+std::string Apply(const std::string& archivePath, const std::string& gameDir) {
+#if defined(__linux__)
+    std::error_code ec;
+    if (!fs::is_directory(gameDir, ec))
+        return JsonError("the game folder " + gameDir + " is not there");
+
+    std::string z;
+    {
+        std::FILE* f = std::fopen(archivePath.c_str(), "rb");
+        if (!f) return JsonError("cannot read " + archivePath);
+        char buf[65536];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) z.append(buf, n);
+        std::fclose(f);
+    }
+
+    std::vector<CdEntry> entries;
+    std::string err;
+    if (!ReadCentralDirectory(z, entries, err)) return JsonError(err);
+
+    std::vector<std::string> applied, rejected, runnable;
+    size_t backed = 0, locked = 0;
+
+    // Extracting is the whole job for most fixes and the first step for the
+    // rest, and the difference is not in the archive's structure -- it is in
+    // prose written for a person. What can be spotted is the shape of the
+    // second step: a script or an installer sitting in the archive. Named, not
+    // acted on; running one is not this module's call.
+    auto looksRunnable = [](const std::string& n) {
+        static const char* kExts[] = { ".cmd", ".bat", ".vbs", ".exe", ".reg",
+                                       ".ps1", ".sh" };
+        if (n.find('/') != std::string::npos) return false;   // top level only
+        for (const char* ext : kExts)
+            if (EndsWith(n, ext)) return true;
+        return false;
+    };
+
+    for (const CdEntry& e : entries) {
+        if (e.name.empty() || e.name.back() == '/') continue;   // a directory
+
+        // Anything that could resolve outside the game folder is refused before
+        // it is read, not sanitised: a fix archive has no business naming a
+        // parent directory, and an attempt to is worth showing rather than
+        // silently repairing. Backslashes go too - they are legal in a zip name
+        // and mean nothing to this filesystem, so they would land as one long
+        // filename rather than the path the archive intended.
+        if (e.name.find("..") != std::string::npos || e.name[0] == '/' ||
+            e.name.find('\\') != std::string::npos) {
+            rejected.push_back(e.name + ": rejected, name escapes the game folder");
+            continue;
+        }
+
+        if (e.flags & 0x1) { locked++; continue; }
+        if (e.uncompressed > kMaxEntryBytes) {
+            rejected.push_back(e.name + ": implausibly large (" +
+                               std::to_string(e.uncompressed) + " bytes)");
+            continue;
+        }
+
+        size_t at = 0;
+        if (!EntryData(z, e, at, err)) {
+            rejected.push_back(e.name + ": " + err);
+            continue;
+        }
+
+        std::string data;
+        if (e.method == 0) {
+            if (e.compressed != e.uncompressed) {
+                rejected.push_back(e.name + ": stored entry has mismatched sizes");
+                continue;
+            }
+            data.assign(z, at, e.compressed);
+        } else if (e.method == 8) {
+            if (!Inflate(z.data() + at, e.compressed, e.uncompressed, data)) {
+                rejected.push_back(e.name + ": inflate failed");
+                continue;
+            }
+        } else {
+            rejected.push_back(e.name + ": unsupported compression method " +
+                               std::to_string(e.method));
+            continue;
+        }
+
+        const uLong crc = crc32(crc32(0L, Z_NULL, 0),
+                                reinterpret_cast<const Bytef*>(data.data()),
+                                static_cast<uInt>(data.size()));
+        if (crc != e.crc) {
+            rejected.push_back(e.name + ": CRC mismatch");
+            continue;
+        }
+
+        const fs::path dest = fs::path(gameDir) / e.name;
+        // Copied, not renamed: WriteAtomic can still fail, and moving the
+        // original out of the way first would turn a failed write into a
+        // missing file. Only the first apply backs anything up, so applying a
+        // second fix cannot overwrite the copy of what the game shipped.
+        if (fs::exists(dest, ec)) {
+            fs::path bak = dest;
+            bak += ".sfbak";
+            if (!fs::exists(bak, ec)) {
+                fs::copy_file(dest, bak, ec);
+                if (!ec) backed++;
+            }
+        }
+
+        if (!WriteAtomic(dest.parent_path(), dest.filename().string(), data, err)) {
+            rejected.push_back(e.name + ": " + err);
+            continue;
+        }
+        applied.push_back(e.name);
+        if (looksRunnable(e.name)) runnable.push_back(e.name);
+    }
+
+    if (applied.empty() && locked) {
+        return JsonError("This archive is password protected, so it can only be "
+                         "unpacked by hand. Fixes mirrored from online-fix.me "
+                         "usually take \"online-fix.me\" as the password.");
+    }
+    if (applied.empty()) {
+        return "{\"error\":\"Nothing in the archive could be applied\",\"rejected\":" +
+               JsonArray(rejected) + "}";
+    }
+    if (locked)
+        rejected.push_back(std::to_string(locked) +
+                           " encrypted entries were left in the archive");
+
+    return "{\"ok\":true,\"applied\":" + std::to_string(applied.size()) +
+           ",\"backed\":" + std::to_string(backed) +
+           ",\"dir\":\"" + JsonEscape(gameDir) + "\",\"runnable\":" +
+           JsonArray(runnable) + ",\"rejected\":" + JsonArray(rejected) + "}";
+#else
+    (void)archivePath;
+    (void)gameDir;
     return JsonError("unsupported platform");
 #endif
 }

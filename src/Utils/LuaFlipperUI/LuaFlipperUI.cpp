@@ -1719,28 +1719,35 @@ namespace {
     /**
      * Fetch one fix archive to disk.
      *
-     * Downloaded rather than applied. A fix is a zip whose own instructions are
-     * written for a person ("extract to the game folder", "run VBS.cmd, follow
-     * its prompts"), they differ per release, and getting them wrong breaks an
-     * installed game. So this puts the archive somewhere findable and hands the
-     * instructions to the page; deciding what to do with it stays with whoever
-     * read them.
+     * Downloaded, not applied. Fixes do not share a way in: most want the
+     * archive extracted over the game, some ship an installer to run, some need
+     * a file put somewhere particular, and the difference lives in prose that
+     * differs per release. Guessing wrong breaks an installed game, so what to
+     * do with the archive stays with whoever read the instructions.
+     *
+     * `appId` only buys the reply the game's folder, so the page can offer to
+     * do the extraction for the fixes where that is the whole of it. Nothing is
+     * written outside the fixes directory here.
      *
      * This is the one endpoint in the catalog that needs an account. Without a
      * token the service answers 401, which is reported as the missing setting
      * it is rather than as a network failure.
      */
     std::string JsonFixDownload(const std::string& fixId, const std::string& name,
-                                const std::string& slot) {
+                                const std::string& slot,
+                                const std::string& appId) {
         if (fixId.empty()) return "{\"error\":\"no fix id\"}";
         const std::string want = (slot == "manifest") ? "manifest" : "fix";
 
         std::string err;
         const std::string access = FixesAccessToken(err);
         if (access.empty()) {
-            return "{\"error\":\"Not signed in to lua.tools. The catalog is free; "
-                   "downloading a fix is not. Sign in on the Fixes page with a code "
-                   "from their Discord bot.\",\"needsLogin\":true}";
+            // needsLogin is what the page acts on; the sentence is only the
+            // fallback for anyone reading the API directly, so it does not
+            // describe a button they cannot see.
+            return "{\"error\":\"This fix is hosted by lua.tools, and only the "
+                   "catalog is free. Sign in with Discord to download it.\","
+                   "\"needsLogin\":true}";
         }
 
         const std::wstring auth =
@@ -1800,8 +1807,50 @@ namespace {
         o.close();
 
         LOG_INFO("LuaFlipperUI: fix {} saved ({} bytes)", file, f.body.size());
+
+        // Only for the fix slot. A manifest is a lua for the loader, and there
+        // is no sense in offering to drop one into a game folder.
+        std::string where;
+        if (want == "fix" && !appId.empty())
+            where = LuaFlipperDownload::GameDir(appId, g_steamPath);
+
         return "{\"ok\":true,\"path\":\"" + JsonEscape(out.string()) +
-               "\",\"bytes\":" + std::to_string(f.body.size()) + "}";
+               "\",\"bytes\":" + std::to_string(f.body.size()) +
+               ",\"file\":\"" + JsonEscape(file) +
+               "\",\"gameDir\":\"" + JsonEscape(where) + "\"}";
+    }
+
+    /**
+     * Extract an already-downloaded fix over the game, on request.
+     *
+     * Deliberately its own endpoint rather than a step of the download. It does
+     * one thing -- the "extract to the game folder" line that most fixes open
+     * with -- and it is asked for by someone who has the rest of the
+     * instructions in front of them.
+     *
+     * `name` is a filename in the fixes directory, never a path: it comes back
+     * from the download that wrote it, and is re-checked here because the
+     * server will answer anyone who can reach the port.
+     */
+    std::string JsonFixApply(const std::string& appId, const std::string& name) {
+        if (name.empty() || name.find('/') != std::string::npos ||
+            name.find('\\') != std::string::npos || name.find("..") != std::string::npos)
+            return "{\"error\":\"bad archive name\"}";
+
+        const std::filesystem::path zip =
+            std::filesystem::path(g_steamPath) / "steamflipper" / "fixes" / name;
+        std::error_code ec;
+        if (!std::filesystem::exists(zip, ec))
+            return "{\"error\":\"That archive is not in the fixes folder any "
+                   "more. Download it again.\"}";
+
+        const std::string dir = LuaFlipperDownload::GameDir(appId, g_steamPath);
+        if (dir.empty())
+            return "{\"error\":\"Steam has no install folder for this app.\"}";
+
+        const std::string res = LuaFlipperDownload::Apply(zip.string(), dir);
+        LOG_INFO("LuaFlipperUI: applied {} to {}", name, dir);
+        return res;
     }
 
     /**
@@ -2278,7 +2327,12 @@ namespace {
         if (path == "/api/fixes/download") {
             return JsonFixDownload(QueryParam(fullPath, "fix"),
                                    QueryParam(fullPath, "name"),
-                                   QueryParam(fullPath, "slot"));
+                                   QueryParam(fullPath, "slot"),
+                                   QueryParam(fullPath, "appid"));
+        }
+        if (path == "/api/fixes/apply") {
+            return JsonFixApply(QueryParam(fullPath, "appid"),
+                                QueryParam(fullPath, "name"));
         }
         if (path == "/api/cloud")        return JsonCloud();
         if (path == "/api/cloud/enable")  return JsonCloudEnable();

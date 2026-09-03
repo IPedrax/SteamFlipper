@@ -53,4 +53,24 @@ namespace LuaFlipperDownload {
     std::string Install(const std::string& appId, const std::string& source,
                         const std::string& steamPath);
 
+    // Extract an already-downloaded fix archive into a game's install folder,
+    // which is what every fix's own instructions ask a person to do by hand.
+    // Extracted verbatim, paths and all: the archives are authored for "extract
+    // here", so a wrapper folder in one of them is meant to be a wrapper folder
+    // on disk, and quietly flattening it would put the files where nothing
+    // loads them.
+    //
+    // Any file it replaces is copied to <name>.sfbak first, once. A fix
+    // overwrites the shipped steam_api DLLs, and without a copy of those the
+    // only way back is verifying the game files.
+    //   {"ok":true,"applied":7,"dir":"..","backed":2,"rejected":[..]}
+    // Password-protected archives are reported as such rather than as a
+    // corrupt file; they are common enough at the origin to be worth naming.
+    // Where Steam installed an app, or "" when it did not: the folder a fix is
+    // meant to be extracted into. Walks libraryfolders.vdf, so a game on a
+    // second drive is found; "" also covers a library that is not mounted.
+    std::string GameDir(const std::string& appId, const std::string& steamPath);
+
+    std::string Apply(const std::string& archivePath, const std::string& gameDir);
+
 } // namespace LuaFlipperDownload
