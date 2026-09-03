@@ -19,7 +19,9 @@ namespace {
         std::vector<std::string> remoteUrlTemplates;
         bool statsEnableApi = true;
         bool updateEnabled = true;
+        std::string updateRepo;
         bool diagnosticsPopups = true;
+        bool uiEnabled = true;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
     };
@@ -56,7 +58,9 @@ namespace {
         remoteUrlTemplates     = snapshot.remoteUrlTemplates;
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
+        updateRepo             = snapshot.updateRepo;
         diagnosticsPopups      = snapshot.diagnosticsPopups;
+        uiEnabled              = snapshot.uiEnabled;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
         cloudLibrary           = snapshot.cloud.library;
@@ -161,12 +165,22 @@ namespace {
                 if (auto val = (*update)["enabled"].value<bool>()) {
                     snapshot.updateEnabled = *val;
                 }
+                if (auto val = (*update)["repo"].value<std::string>()) {
+                    snapshot.updateRepo = *val;
+                }
             }
 
             // [diagnostics]
             if (auto diag = tbl["diagnostics"].as_table()) {
                 if (auto val = (*diag)["popups"].value<bool>()) {
                     snapshot.diagnosticsPopups = *val;
+                }
+            }
+
+            // [ui]
+            if (auto ui = tbl["ui"].as_table()) {
+                if (auto val = (*ui)["enabled"].value<bool>()) {
+                    snapshot.uiEnabled = *val;
                 }
             }
 
@@ -280,6 +294,16 @@ namespace {
     bool GetUpdateEnabled() {
         std::lock_guard lock(g_mutex);
         return updateEnabled;
+    }
+
+    std::string GetUpdateRepo() {
+        std::lock_guard lock(g_mutex);
+        return updateRepo;
+    }
+
+    bool GetUiEnabled() {
+        std::lock_guard lock(g_mutex);
+        return uiEnabled;
     }
 
     CloudSettings GetCloudSettings() {

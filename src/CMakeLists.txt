@@ -27,6 +27,45 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 # be set BEFORE FetchContent_MakeAvailable so the fetched deps inherit it.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ---------------------------------------------------------------------------
+# Build provenance: the commit the module is built from.
+#
+# The updater compares this sha against the branch head, so a build made
+# outside a checkout must say so rather than report a sha it cannot back up.
+# ---------------------------------------------------------------------------
+set(SF_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+set(STEAMFLIPPER_GIT_SHA "unknown")
+set(STEAMFLIPPER_GIT_BRANCH "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${SF_REPO_ROOT}" rev-parse --short HEAD
+        OUTPUT_VARIABLE SF_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE SF_GIT_RC)
+    if(SF_GIT_RC EQUAL 0 AND SF_GIT_SHA)
+        set(STEAMFLIPPER_GIT_SHA "${SF_GIT_SHA}")
+    endif()
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${SF_REPO_ROOT}" rev-parse --abbrev-ref HEAD
+        OUTPUT_VARIABLE SF_GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE SF_GIT_RC)
+    if(SF_GIT_RC EQUAL 0 AND SF_GIT_BRANCH)
+        set(STEAMFLIPPER_GIT_BRANCH "${SF_GIT_BRANCH}")
+    endif()
+endif()
+message(STATUS "SteamFlipper source: ${STEAMFLIPPER_GIT_BRANCH}@${STEAMFLIPPER_GIT_SHA}")
+
+# The sha is resolved at configure time, so without this a rebuild after a
+# commit keeps reporting the sha the tree was first configured at -- and the
+# updater would then call an up-to-date install "behind". HEAD covers a branch
+# switch, the ref file covers a new commit on the branch already checked out.
+foreach(SF_GIT_WATCH "${SF_REPO_ROOT}/.git/HEAD"
+                     "${SF_REPO_ROOT}/.git/refs/heads/${STEAMFLIPPER_GIT_BRANCH}")
+    if(EXISTS "${SF_GIT_WATCH}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SF_GIT_WATCH}")
+    endif()
+endforeach()
+
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SteamFlipperBuildInfo.h.in"
@@ -66,21 +105,28 @@ steamflipper_add_ipc_codegen(IPC_GEN
 #   Debug   → full Message     (protoc --cpp_out)       → links libprotobuf
 #   Release → lite MessageLite (protoc --cpp_out=lite:) → links libprotobuf-lite
 # ---------------------------------------------------------------------------
-set(PROTO_SRC "${CMAKE_CURRENT_SOURCE_DIR}/proto/steam_messages.proto")
+# steam_messages carries the client/service messages the hooks touch,
+# cloud_messages the Steam Cloud subset the native save backend parses. They
+# import nothing from each other, so each is generated on its own.
+set(PROTO_NAMES steam_messages cloud_messages)
 set(PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>")
+set(PROTO_GEN_SRCS "")
 
-add_custom_command(
-    OUTPUT "${PROTO_GEN_DIR}/steam_messages.pb.cc"
-           "${PROTO_GEN_DIR}/steam_messages.pb.h"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${PROTO_GEN_DIR}"
-    COMMAND $<TARGET_FILE:protoc>
-        "--cpp_out=$<$<CONFIG:Release>:lite:>${PROTO_GEN_DIR}"
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/proto"
-        "${PROTO_SRC}"
-    DEPENDS "${PROTO_SRC}" protoc
-    COMMENT "Generating protobuf C++ sources"
-    VERBATIM
-)
+foreach(proto IN LISTS PROTO_NAMES)
+    add_custom_command(
+        OUTPUT "${PROTO_GEN_DIR}/${proto}.pb.cc"
+               "${PROTO_GEN_DIR}/${proto}.pb.h"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PROTO_GEN_DIR}"
+        COMMAND $<TARGET_FILE:protoc>
+            "--cpp_out=$<$<CONFIG:Release>:lite:>${PROTO_GEN_DIR}"
+            "-I${CMAKE_CURRENT_SOURCE_DIR}/proto"
+            "${CMAKE_CURRENT_SOURCE_DIR}/proto/${proto}.proto"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/proto/${proto}.proto" protoc
+        COMMENT "Generating protobuf C++ sources for ${proto}.proto"
+        VERBATIM
+    )
+    list(APPEND PROTO_GEN_SRCS "${PROTO_GEN_DIR}/${proto}.pb.cc")
+endforeach()
 
 # ---------------------------------------------------------------------------
 # SFPlatform — internal static library that owns the OS-specific backends.
@@ -102,6 +148,10 @@ add_library(SteamFlipper SHARED
     Utils/Config/LuaConfig.cpp
     Utils/Config/LuaFileWatcher.cpp
     Utils/CloudRedirect/CloudRedirectHost.cpp
+    Utils/CloudSaves/CloudSaves.cpp
+    Utils/LuaFlipperUI/LuaFlipperUI.cpp
+    Utils/LuaFlipperUI/LuaFlipperPages.cpp
+    Utils/LuaFlipperUI/LuaFlipperDownload.cpp
     Utils/HookSupport/VehCommon.cpp
     Utils/Logging/Log.cpp
     Utils/SteamMetadata/IPCLoader.cpp
@@ -142,7 +192,7 @@ add_library(SteamFlipper SHARED
     Hook/Hooks_Package.cpp
 
     # protobuf generated sources (full in Debug, lite in Release)
-    "${PROTO_GEN_DIR}/steam_messages.pb.cc"
+    ${PROTO_GEN_SRCS}
 )
 
 set_target_properties(SteamFlipper PROPERTIES
@@ -183,6 +233,8 @@ target_link_libraries(SteamFlipper PRIVATE
     tomlplusplus::tomlplusplus
     $<$<CONFIG:Debug>:spdlog::spdlog>
     $<$<PLATFORM_ID:Windows>:Shell32>
+    # Manifest packs arrive as zip archives; LuaFlipperDownload inflates them.
+    $<$<PLATFORM_ID:Linux>:z>
 )
 
 # Logging is compiled in only for Debug; Release reduces LOG_* to no-ops.

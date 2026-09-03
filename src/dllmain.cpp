@@ -4,6 +4,8 @@
 #include "Utils/Config/ConfigFileWatcher.h"
 #include "Utils/Config/LuaFileWatcher.h"
 #include "Utils/CloudRedirect/CloudRedirectHost.h"
+#include "Utils/CloudSaves/CloudSaves.h"
+#include "Utils/LuaFlipperUI/LuaFlipperUI.h"
 #include "Utils/SteamMetadata/IPCLoader.h"
 #include "Utils/SteamMetadata/PatternLoader.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
@@ -129,23 +131,34 @@ static uint32_t InitThread(SFPlatform::DynamicLibrary::ModuleHandle selfModule) 
     // Optional Steam Cloud save redirection (CloudRedirect)
     CloudRedirectHost::Initialize(SteamInstallPath);
 
+    // Native cloud saves. Replaces CloudRedirect for the Cloud.* RPCs; its
+    // Linux build exports no host API and its own hooks do not match this
+    // client, so the RPCs are answered in-process instead.
+    CloudSaves::Initialize(SteamInstallPath);
+
+    // In-client LUAFlipper UI. Injects over CEF's debugger, so it is started
+    // last: CEF is not up yet at this point and the thread polls for it.
+    LuaFlipperUI::Initialize(SteamInstallPath);
+
 #ifdef _WIN32
     // Register the bst:// URI scheme so the website can drive code redemption
     TokeerBridge::RegisterUriScheme(std::string(SteamInstallPath) + "\\SteamFlipper.dll");
 #endif
 
-    // Optional self-update check.
+    // Optional self-update check, always on its own detached thread: it makes a
+    // network call, and init must not wait on one.
     //
-    // Windows only. The update channel publishes the Windows DLL, and there is
-    // no Linux artifact to fetch — staging one over the module would replace a
-    // .so with a PE image. The Linux path was also wrong regardless: an
-    // LD_PRELOAD module lives wherever the launcher points at (build/32/,
-    // /usr/lib32/, ...), not inside the Steam directory, so the assumed path
-    // never matched the loaded module. Re-enable once a Linux release exists
-    // and the self path is derived from the loaded module (dladdr) instead.
-#ifdef _WIN32
+    // The two platforms update different things. Windows fetches a published
+    // DLL and stages it. Linux has no published artifact — the module is built
+    // locally by tools/install_linux.sh — so "an update" is a commit on the
+    // branch this was built from, and all this does is say so in the log. It
+    // never pulls and never shows a dialog: the installer refuses to run while
+    // Steam is up, which is precisely when this code is alive, so anything
+    // beyond reporting would be a prompt nobody can act on yet. The Config page
+    // owns the button that acts on it.
     if (Config::GetUpdateEnabled()) {
         SFPlatform::Thread::StartDetached([] () -> uint32_t {
+#ifdef _WIN32
             const std::string self = std::string(SteamInstallPath) + "\\SteamFlipper.dll";
             AppUpdater::CleanupStagedBackup(self);
 
@@ -158,10 +171,25 @@ static uint32_t InitThread(SFPlatform::DynamicLibrary::ModuleHandle selfModule) 
                 upd.oldVersion + " -> " + upd.newVersion +
                 "\n\nRestart Steam now to apply?");
             if (restart) AppUpdater::RestartSteam();
+#else
+            // Which file is actually mapped, rather than which one the
+            // installer would have written: they differ during development, and
+            // this is the line that says which one a rebuild has to replace.
+            LOG_INFO("SteamFlipper module: {}", AppUpdater::SelfPath());
+
+            const AppUpdater::SourceCheck s = AppUpdater::CheckSource();
+            if (!s.error.empty())
+                LOG_WARN("AppUpdater: update check failed: {}", s.error);
+            else if (!s.reason.empty())
+                LOG_INFO("AppUpdater: no update check: {}", s.reason);
+            else if (s.behind)
+                LOG_INFO("AppUpdater: {} has moved to {} (\"{}\"); this build is {}. "
+                         "Pull and run tools/install_linux.sh with Steam closed.",
+                         s.branch, s.remote, s.message, s.sha);
+#endif
             return 0;
         });
     }
-#endif
 
     LOG_INFO("SteamFlipper init complete");
     return 0;

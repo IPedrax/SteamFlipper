@@ -46,6 +46,10 @@ namespace Config {
     CloudSettings GetCloudSettings();
     bool GetStatsEnableApi();
     bool GetUpdateEnabled();
+    std::string GetUpdateRepo();
+
+    // [ui].enabled - the in-client LUAFlipper UI. Default true.
+    bool GetUiEnabled();
     bool GetDiagnosticsPopups();
 
     // [manifest] — provider selection lives in ManifestClient (table-driven).
@@ -72,11 +76,20 @@ namespace Config {
     // [update] - self-update check on startup (staged for next Steam launch).
     inline bool updateEnabled = true;
 
+    // [update].repo - the SteamFlipper source checkout this install was built
+    // from. Not derivable: the installed module sits under ~/.local/lib and
+    // carries no pointer back to the tree, so an unset value means "unknown"
+    // and the updater refuses to pull rather than guessing a path.
+    inline std::string updateRepo;
+
     // [diagnostics] — when false, SteamDiagnostics::ShowWarning stays silent.
     // Signature/IPC specs are published per steamclient hash, and none exist
     // yet for the Linux binaries, so every launch would otherwise raise the
     // same three unactionable popups.
     inline bool diagnosticsPopups = true;
+
+    // [ui] - the in-client LUAFlipper tab, injected over Steam's CEF debugger.
+    inline bool uiEnabled = true;
 
     // [[inject]] - optional DLL injection into matching game processes.
     inline std::vector<InjectDll> injectDlls;
