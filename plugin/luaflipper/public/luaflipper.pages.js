@@ -4245,20 +4245,36 @@
    * three up front would put two stale panels behind a rail nobody has clicked.
    */
   function configPage(data, el) {
-    var wrap = style(el("div"), { position: "relative" });
+    /*
+     * This page does not scroll, and the sizing is what enforces that.
+     *
+     * .luaflipper-body is flex:1 in a column with a definite height, so its own
+     * height is definite and a percentage here resolves against it. Everything
+     * below is measured from that rather than from the viewport: the dialog is
+     * exactly as tall as the frame it sits in, so the rail reaches the bottom
+     * edge and nothing extends past it.
+     *
+     * It used to be a viewport calculation and a backdrop with a flat 1400px
+     * height, and the backdrop was the taller of the two -- an absolutely
+     * positioned box still counts towards its scroll container's overflow, so
+     * the page scrolled 418px past content that had already ended.
+     */
+    var wrap = style(el("div"), { position: "relative", height: "100%" });
     wrap.appendChild(style(el("div"), {
-      position: "absolute", top: "-18px", left: "-24px",
-      width: "calc(100% + 48px)", height: "1400px", zIndex: "0",
+      position: "absolute", top: "-18px", bottom: "-18px", left: "-24px",
+      width: "calc(100% + 48px)", zIndex: "0",
       pointerEvents: "none", background: PAGE_WASH
     }));
 
     // The dialog itself: rail and pane, filling the page the way the settings
     // window fills its own. The negative margins escape .luaflipper-body's
     // padding, because the rail runs to the window edge in Steam's dialog and a
-    // rail floating in from the left would read as a card, not a dialog.
+    // rail floating in from the left would read as a card, not a dialog; the
+    // 36px is that padding being added back so the dialog still ends where the
+    // frame does.
     var shell = style(el("div"), {
       position: "relative", zIndex: "1", display: "flex",
-      margin: "-18px -24px", minHeight: "calc(100vh - 120px)"
+      margin: "-18px -24px", minHeight: "calc(100% + 36px)"
     });
     wrap.appendChild(shell);
 
