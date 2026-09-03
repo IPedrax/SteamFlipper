@@ -110,24 +110,438 @@
     return wrap;
   }
 
-  /** Fixes the loader applied, one row each: kind, file it touched, detail. */
+  /**
+   * The Fixes page: the library, filtered to games a fix exists for.
+   *
+   * Two views in one element, toggled rather than rebuilt, so coming back from
+   * a game lands on the grid that was already there.
+   *
+   * The grid is the same portrait grid Manage draws, because it is answering
+   * the same kind of question about the same games. The game view is Steam's
+   * own library page for a game: hero across the top, an action button at the
+   * left of the bar under it, and stat blocks to its right. Steam puts play
+   * time and last played in those blocks; this puts what is known about the
+   * game's fixes there, since that is what the page is for. The Play button
+   * becomes Fix, and opens the fix list rather than launching anything.
+   *
+   * Scope: only games this install has a manifest for. The catalog carries
+   * about seventeen hundred, and a page listing fixes for games the user has no
+   * manifest for would be a shop, not a fix list.
+   */
   function fixes(data, el) {
     var err = errorEl(data, el);
     if (err) return err;
 
-    var list = arr(data && data.fixes);
-    var wrap = el("div");
+    var list = arr(data && data.games).filter(function (g) { return !!g; });
+
+    var wrap = style(el("div"), { position: "relative" });
+    wrap.appendChild(style(el("div"), {
+      position: "absolute", top: "-18px", left: "-24px",
+      width: "calc(100% + 48px)", height: "1200px", zIndex: "0",
+      pointerEvents: "none", background: PAGE_WASH
+    }));
+    var page = style(el("div"), { position: "relative", zIndex: "1" });
+    wrap.appendChild(page);
 
     if (!list.length) {
-      wrap.appendChild(el("div", "luaflipper-empty",
-        "No fixes applied. Nothing needed patching."));
+      page.appendChild(el("div", "luaflipper-empty",
+        "No fixes for anything installed. " + num(data && data.scanned) +
+        " games in the catalog were checked against " +
+        plural(num(data && data.installed), "manifest") + " here."));
       return wrap;
     }
 
-    wrap.appendChild(el("div", "luaflipper-sub", plural(list.length, "fix", "fixes")));
-    list.forEach(function (f) {
-      wrap.appendChild(row(el, text(f.kind), text(f.file), text(f.detail)));
+    /* ---------------------------------------------------------- views --- */
+
+    var grid = style(el("div"), {
+      display: "grid", gap: "16px",
+      gridTemplateColumns: "repeat(auto-fill, minmax(152px, 1fr))"
     });
+    var gridView = el("div");
+    var gameView = el("div");
+    gameView.style.display = "none";
+    page.appendChild(gridView);
+    page.appendChild(gameView);
+
+    gridView.appendChild(style(el("div", "luaflipper-sub",
+      list.length + " of " + plural(num(data.installed), "installed manifest") +
+      " have a published fix, out of " + num(data.scanned) +
+      " games in the catalog."), { marginBottom: "14px" }));
+    gridView.appendChild(grid);
+
+    function showGrid() {
+      gameView.style.display = "none";
+      gridView.style.display = "";
+    }
+
+    /* ---------------------------------------------------------- modal --- */
+
+    /**
+     * One fix, over the page.
+     *
+     * The description is the release's own text, and it is instructions: which
+     * files to extract where, what to disable first, what to undo afterwards.
+     * It is shown whole and unstyled rather than summarised, because a fix
+     * applied from a summary is a broken install.
+     */
+    function openFix(fix, appId) {
+      var back = style(el("div"), {
+        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
+        background: "rgba(0,0,0,0.65)", zIndex: "9000",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "40px"
+      });
+
+      var box = style(el("div"), {
+        background: "#23262e", borderRadius: "3px", width: "660px",
+        maxWidth: "100%", maxHeight: "100%", display: "flex",
+        flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.6)"
+      });
+      back.appendChild(box);
+
+      var head = style(el("div"), {
+        display: "flex", alignItems: "center", gap: "12px",
+        padding: "14px 16px", borderBottom: "1px solid " + SET.rule
+      });
+      head.appendChild(style(el("div", null, text(fix.title) || "Fix"), {
+        fontSize: "18px", fontWeight: "700", color: "#ffffff",
+        flex: "1 1 auto", minWidth: "0", overflow: "hidden",
+        textOverflow: "ellipsis", whiteSpace: "nowrap"
+      }));
+      var x = style(el("div", null, "✕"), {
+        cursor: "pointer", color: SET.desc, fontSize: "16px", padding: "0 4px"
+      });
+      head.appendChild(x);
+      box.appendChild(head);
+
+      var body = style(el("div"), {
+        padding: "14px 16px", overflowY: "auto", flex: "1 1 auto"
+      });
+      box.appendChild(body);
+
+      var tags = arr(fix.tags);
+      if (tags.length) {
+        var strip = style(el("div"), {
+          display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "12px"
+        });
+        tags.forEach(function (t) {
+          // The service ships a colour per tag; it is the one piece of the
+          // catalog with an opinion about how it looks, so it is honoured.
+          strip.appendChild(style(el("div", null, text(t && t.name)), {
+            fontSize: "11px", fontWeight: "bold", padding: "3px 8px",
+            borderRadius: "2px", color: "#111318",
+            background: text(t && t.color) || "rgba(255,255,255,0.2)"
+          }));
+        });
+        body.appendChild(strip);
+      }
+
+      var when = text(fix.createdAt).substring(0, 10);
+      var facts = [];
+      if (when) facts.push("published " + when);
+      if (fix.fixFilename) facts.push(text(fix.fixFilename));
+      if (fix.manifestFilename) facts.push(text(fix.manifestFilename));
+      if (facts.length) {
+        body.appendChild(style(el("div", null, facts.join("  ·  ")), {
+          fontSize: "12px", color: SET.desc, marginBottom: "12px"
+        }));
+      }
+
+      body.appendChild(style(el("div", null, text(fix.description) ||
+        "This fix ships no instructions."), {
+        whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "13px",
+        lineHeight: "19px", color: SET.label, userSelect: "text",
+        webkitUserSelect: "text"
+      }));
+
+      var foot = style(el("div"), {
+        display: "flex", alignItems: "center", gap: "12px",
+        padding: "12px 16px", borderTop: "1px solid " + SET.rule
+      });
+      box.appendChild(foot);
+
+      var said = style(el("div"), {
+        flex: "1 1 auto", minWidth: "0", fontSize: "12px", lineHeight: "17px",
+        color: SET.desc, wordBreak: "break-word",
+        userSelect: "text", webkitUserSelect: "text"
+      });
+      foot.appendChild(said);
+
+      var get = dialogBtn(el, fix.hasFix ? "Download fix" : "No archive");
+      if (!fix.hasFix) get.busyLook(true);
+      foot.appendChild(get);
+
+      get.addEventListener("click", function () {
+        if (!fix.hasFix) return;
+        get.busyLook(true);
+        get.textContent = "Downloading";
+        said.textContent = "";
+        fetch(API + "fixes/download?fix=" + encodeURIComponent(text(fix.id)) +
+              "&name=" + encodeURIComponent(text(fix.fixFilename)))
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            get.busyLook(false);
+            if (!res || typeof res !== "object") throw new Error("unreadable reply");
+            if (res.error) {
+              get.textContent = res.needsToken ? "Download fix" : "Try again";
+              said.textContent = text(res.error);
+              said.style.color = "#e7a94a";
+              return;
+            }
+            get.textContent = "Downloaded";
+            get.busyLook(true);
+            said.style.color = "#a4d007";
+            // Where it landed, not "done". The archive still has to be applied
+            // by hand, and the instructions above say where.
+            said.textContent = "Saved " + bytes(num(res.bytes)) + " to " +
+              text(res.path) + ". Apply it as the instructions above describe.";
+          })
+          .catch(function (e) {
+            get.busyLook(false);
+            get.textContent = "Try again";
+            said.style.color = "#e7a94a";
+            said.textContent = "Could not reach SteamFlipper: " + why(e);
+          });
+      });
+
+      function close() {
+        if (back.parentNode) back.parentNode.removeChild(back);
+        document.removeEventListener("keydown", onKey, true);
+      }
+      function onKey(ev) { if (ev.key === "Escape") close(); }
+      x.addEventListener("click", close);
+      back.addEventListener("click", function (ev) {
+        if (ev.target === back) close();
+      });
+      document.addEventListener("keydown", onKey, true);
+
+      // On the page's own root, so it dies with the page rather than being left
+      // over the client after the tab is closed.
+      wrap.appendChild(back);
+    }
+
+    /* ----------------------------------------------------------- game --- */
+
+    /**
+     * Steam's library page for one game, with fix information where the play
+     * stats go.
+     *
+     * Measured off the live one: the hero sits over a blurred copy of itself,
+     * the bar under it carries the action button on the left, and each stat is
+     * a 13px uppercase label with 1px tracking over a 12px value.
+     */
+    function openGame(game) {
+      var appId = appid(text(game.appid));
+      gridView.style.display = "none";
+      gameView.style.display = "";
+      gameView.innerHTML = "";
+
+      var crumb = style(el("div", null, "‹ All games with fixes"), {
+        cursor: "pointer", color: LINK_TEXT, fontSize: "13px",
+        marginBottom: "12px", display: "inline-block"
+      });
+      crumb.addEventListener("click", showGrid);
+      gameView.appendChild(crumb);
+
+      // Hero. 23% is the proportion Steam draws library_hero.jpg at in its own
+      // game page, measured off the live one; a padding-top box holds that
+      // shape while the art is still loading or never arrives.
+      var hero = style(el("div"), {
+        position: "relative", paddingTop: "23%", borderRadius: "3px",
+        overflow: "hidden", background: INSET, marginBottom: "0"
+      });
+      var heroImg = style(el("img"), {
+        position: "absolute", top: "0", left: "0", width: "100%",
+        height: "100%", objectFit: "cover", display: "block"
+      });
+      heroImg.alt = "";
+      var heroName = style(el("div", null, text(game.name)), {
+        position: "absolute", top: "0", left: "0", right: "0", bottom: "0",
+        display: "none", alignItems: "center", justifyContent: "center",
+        fontSize: "28px", fontWeight: "700", color: "#ffffff", padding: "16px",
+        textAlign: "center"
+      });
+      hero.appendChild(heroImg);
+      hero.appendChild(heroName);
+      if (appId) {
+        libraryArt(heroImg, appId, "library_hero.jpg", "library_hero",
+          function () {
+            heroImg.style.display = "none";
+            heroName.style.display = "flex";
+          });
+      } else {
+        heroImg.style.display = "none";
+        heroName.style.display = "flex";
+      }
+      gameView.appendChild(hero);
+
+      // The bar under the hero: action left, stats right.
+      var bar = style(el("div"), {
+        display: "flex", alignItems: "center", gap: "28px",
+        padding: "14px 16px", background: "rgba(0,0,0,0.30)",
+        borderRadius: "0 0 3px 3px", marginBottom: "18px"
+      });
+      gameView.appendChild(bar);
+
+      var fixBtn = style(el("div", "luaflipper-button", "Fix"), {
+        background: BLUE, border: "0", color: "#ffffff", fontWeight: "bold",
+        fontSize: "15px", textTransform: "uppercase", letterSpacing: "0.5px",
+        padding: "0 34px", lineHeight: "36px", borderRadius: "2px",
+        flex: "0 0 auto", cursor: "pointer"
+      });
+      fixBtn.addEventListener("mouseenter", function () {
+        fixBtn.style.background = BLUE_HOT;
+      });
+      fixBtn.addEventListener("mouseleave", function () {
+        fixBtn.style.background = BLUE;
+      });
+      bar.appendChild(fixBtn);
+
+      function stat(label, value) {
+        var s = style(el("div"), { flex: "0 0 auto", minWidth: "0" });
+        s.appendChild(style(el("div", null, label), {
+          fontSize: "13px", textTransform: "uppercase", letterSpacing: "1px",
+          color: "rgba(255,255,255,0.52)", lineHeight: "16px"
+        }));
+        var v = style(el("div", null, value), {
+          fontSize: "12px", color: "rgba(255,255,255,0.32)", lineHeight: "17px",
+          marginTop: "2px"
+        });
+        s.appendChild(v);
+        bar.appendChild(s);
+        return v;
+      }
+
+      var countVal = stat("Fixes available", plural(num(game.fixes), "fix", "fixes"));
+      var latestVal = stat("Latest fix", "loading");
+      // The other half of "is this game working": a manifest that registers
+      // ownership it has no key for downloads and then fails to decrypt, which
+      // no downloadable fix addresses. It belongs beside them, not hidden.
+      stat("Manifest keys", num(game.keyless)
+        ? num(game.keyless) + " appid(s) with no key, " + num(game.keyed) + " keyed"
+        : num(game.keyed) + " keyed, all covered");
+
+      var listBox = el("div");
+      gameView.appendChild(listBox);
+      listBox.appendChild(el("div", "luaflipper-loading", "Loading fixes…"));
+
+      // Held so the Fix button can open the first one the moment it is pressed,
+      // rather than the button doing nothing until the list has arrived.
+      var loaded = null;
+
+      fixBtn.addEventListener("click", function () {
+        if (loaded && loaded.length) openFix(loaded[0], appId);
+      });
+
+      fetch(API + "fixes/list?appid=" + encodeURIComponent(text(game.appid)))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          listBox.innerHTML = "";
+          if (res && res.error) {
+            listBox.appendChild(el("div", "luaflipper-error", text(res.error)));
+            latestVal.textContent = "unknown";
+            return;
+          }
+          loaded = arr(res && res.fixes);
+          countVal.textContent = plural(loaded.length, "fix", "fixes");
+          if (!loaded.length) {
+            listBox.appendChild(el("div", "luaflipper-empty",
+              "The catalog lists this game but ships no fix for it."));
+            latestVal.textContent = "none";
+            return;
+          }
+
+          // Newest first, and the newest is what the Fix button opens.
+          loaded.sort(function (a, b) {
+            return text(b.createdAt) < text(a.createdAt) ? -1 : 1;
+          });
+          latestVal.textContent = text(loaded[0].createdAt).substring(0, 10) ||
+            "unknown";
+
+          var g = fieldGroup(el);
+          listBox.appendChild(g);
+          loaded.forEach(function (f) {
+            var names = arr(f.tags).map(function (t) { return text(t && t.name); });
+            var right = field(el, g, text(f.title) || "Fix",
+              names.join(", ") + (names.length ? "  ·  " : "") +
+              text(f.createdAt).substring(0, 10),
+              dialogBtn(el, "Open"));
+            // The whole row, not just the button: a list of rows where only a
+            // 60px target does anything is a list that feels broken.
+            var host = right.parentNode;
+            host.style.cursor = "pointer";
+            host.addEventListener("click", function () { openFix(f, appId); });
+          });
+        })
+        .catch(function (e) {
+          listBox.innerHTML = "";
+          listBox.appendChild(el("div", "luaflipper-error",
+            "Could not reach SteamFlipper: " + why(e)));
+          latestVal.textContent = "unknown";
+        });
+    }
+
+    /* ----------------------------------------------------------- grid --- */
+
+    list.forEach(function (game) {
+      var id = appid(text(game.appid));
+      var box = style(el("div"), { position: "relative", cursor: "pointer" });
+      grid.appendChild(box);
+
+      var cap = style(el("div"), {
+        position: "relative", paddingTop: "150%", borderRadius: "3px",
+        overflow: "hidden", background: INSET,
+        boxShadow: "rgba(0,0,0,0.5) 0 4px 8px 0",
+        transition: "transform 120ms ease, box-shadow 120ms ease"
+      });
+      box.appendChild(cap);
+
+      var img = style(el("img"), {
+        position: "absolute", top: "0", left: "0", width: "100%",
+        height: "100%", objectFit: "cover", display: "block"
+      });
+      img.alt = "";
+      cap.appendChild(img);
+
+      var plate = style(el("div", null, text(game.name)), {
+        position: "absolute", top: "0", left: "0", right: "0", bottom: "0",
+        display: "none", alignItems: "center", justifyContent: "center",
+        padding: "12px", textAlign: "center", fontSize: "13px",
+        lineHeight: "1.35", wordBreak: "break-word"
+      });
+      cap.appendChild(plate);
+
+      function blank() {
+        img.style.display = "none";
+        plate.style.display = "flex";
+      }
+      if (id) libraryArt(img, id, "library_600x900.jpg", "library_capsule", blank);
+      else blank();
+
+      // How many, on the tile. The grid exists to be scanned, and a game with
+      // three fixes and a game with one are not the same thing to open.
+      cap.appendChild(style(el("div", null,
+        plural(num(game.fixes), "fix", "fixes")), {
+        position: "absolute", top: "6px", right: "6px", padding: "2px 6px",
+        borderRadius: "2px", fontSize: "11px", fontWeight: "bold",
+        color: "#111318", background: "#67c1f5"
+      }));
+
+      // The same lift Manage uses, so the two grids behave alike.
+      box.addEventListener("mouseenter", function () {
+        style(cap, {
+          transform: "scale(1.03)",
+          boxShadow: "rgba(0,0,0,0.65) 0 6px 14px 0"
+        });
+      });
+      box.addEventListener("mouseleave", function () {
+        style(cap, {
+          transform: "none", boxShadow: "rgba(0,0,0,0.5) 0 4px 8px 0"
+        });
+      });
+      box.addEventListener("click", function () { openGame(game); });
+    });
+
     return wrap;
   }
 
@@ -271,6 +685,14 @@
 
   // Only digits reach a CDN URL or a query string. Steam app ids are numeric,
   // so stripping the rest doubles as the validity test for a search result.
+  /** A byte count as something a person reads. */
+  function bytes(n) {
+    if (!n) return "0 B";
+    var u = ["B", "KB", "MB", "GB"], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(1) : String(n)) + " " + u[i];
+  }
+
   function appid(v) {
     return text(v).replace(/[^0-9]/g, "");
   }
@@ -445,6 +867,43 @@
     var set = ladder(img, id, ["header_292x136.jpg", "header.jpg"]);
     if (setters) setters.push(set);
     return img;
+  }
+
+  /**
+   * Fill an image with the art Steam's own library would draw, or give up.
+   *
+   * The client's own asset host comes first because that is where Steam keeps
+   * what the library is currently showing, custom art the user set by hand
+   * included, so a tile matches the library rather than merely resembling it.
+   * The flat CDN path covers everything the client has not cached, and
+   * /api/assets resolves the hashed URL for apps published since Steam moved
+   * its art behind those, which is most of what gets added here.
+   *
+   * `flat` is the filename on both of those paths and `hashed` the /api/assets
+   * field that answers for the same art: library_600x900.jpg / library_capsule
+   * for a tile, library_hero.jpg / library_hero for a game page.
+   */
+  function libraryArt(img, id, flat, hashed, blank) {
+    var urls = [
+      "https://steamloopback.host/assets/" + id + "/" + flat,
+      CDN + id + "/" + flat
+    ];
+    var next = 0;
+
+    img.onerror = function () {
+      if (next < urls.length) { img.src = urls[next++]; return; }
+      // Flat paths exhausted. One request for the hashed one, then stop:
+      // no art is a normal state for an app, not a failure to retry.
+      img.onerror = blank;
+      ask("assets?appid=" + encodeURIComponent(id))
+        .then(function (res) {
+          var ok = usable(res);
+          var u = ok ? text(ok[hashed]) : "";
+          if (u) img.src = u; else blank();
+        })
+        .catch(blank);
+    };
+    img.onerror();
   }
 
   /**
@@ -2228,39 +2687,6 @@
 
     /* ----------------------------------------------------------- art --- */
 
-    /**
-     * Fill a tile's image with portrait art, or give up and say so.
-     *
-     * The client's own asset host comes first because that is where Steam keeps
-     * what the library is currently showing, custom art the user set by hand
-     * included, so a tile matches the library rather than merely resembling it.
-     * The flat CDN path covers everything the client has not cached, and
-     * /api/assets resolves the hashed URL for apps published since Steam moved
-     * its art behind those, which is most of what gets added here.
-     */
-    function art(img, id, blank) {
-      var urls = [
-        "https://steamloopback.host/assets/" + id + "/library_600x900.jpg",
-        CDN + id + "/library_600x900.jpg"
-      ];
-      var next = 0;
-
-      img.onerror = function () {
-        if (next < urls.length) { img.src = urls[next++]; return; }
-        // Flat paths exhausted. One request for the hashed one, then stop:
-        // a tile with no art is a normal state, not a failure to retry.
-        img.onerror = blank;
-        ask("assets?appid=" + encodeURIComponent(id))
-          .then(function (res) {
-            var ok = usable(res);
-            var u = ok ? text(ok.library_capsule) : "";
-            if (u) img.src = u; else blank();
-          })
-          .catch(blank);
-      };
-      img.onerror();
-    }
-
     /* ---------------------------------------------------------- tiles --- */
 
     // Only one tile may be armed for removal at a time, and any other click in
@@ -2362,7 +2788,8 @@
       }
       // A hand-named file has no app id to fetch art for, and asking anyway
       // spends a request per tile to be told so.
-      if (id) art(img, id, blank); else blank();
+      if (id) libraryArt(img, id, "library_600x900.jpg",
+                          "library_capsule", blank); else blank();
 
       // A keyless manifest is the one state where the app is in the library and
       // still cannot be played, so it is said on the tile rather than only in

@@ -545,8 +545,11 @@
   function loadPage(body, page) {
     // Config asks for its own reply here and fetches /api/cloud and /api/status
     // itself, when the section that needs them is opened.
-    var method = { unlocker: "unlocker", manage: "manifests", fixes: "fixes",
-                   config: "config" }[page];
+    var method = { unlocker: "unlocker", manage: "manifests",
+                   // The catalog, not /api/fixes: the page draws the games a
+                   // published fix exists for, and asks for one game's fix list
+                   // only when that game is opened.
+                   fixes: "fixes/catalog", config: "config" }[page];
 
     callBackend(method).then(function (data) {
       body.innerHTML = "";

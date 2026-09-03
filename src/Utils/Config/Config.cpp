@@ -20,6 +20,7 @@ namespace {
         bool statsEnableApi = true;
         bool updateEnabled = true;
         std::string updateRepo;
+        std::string fixesToken;
         bool diagnosticsPopups = true;
         bool uiEnabled = true;
         std::vector<InjectDll> injectDlls;
@@ -59,6 +60,7 @@ namespace {
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
         updateRepo             = snapshot.updateRepo;
+        fixesToken             = snapshot.fixesToken;
         diagnosticsPopups      = snapshot.diagnosticsPopups;
         uiEnabled              = snapshot.uiEnabled;
         injectDlls             = snapshot.injectDlls;
@@ -167,6 +169,13 @@ namespace {
                 }
                 if (auto val = (*update)["repo"].value<std::string>()) {
                     snapshot.updateRepo = *val;
+                }
+            }
+
+            // [fixes]
+            if (auto fixes = tbl["fixes"].as_table()) {
+                if (auto val = (*fixes)["token"].value<std::string>()) {
+                    snapshot.fixesToken = *val;
                 }
             }
 
@@ -299,6 +308,11 @@ namespace {
     std::string GetUpdateRepo() {
         std::lock_guard lock(g_mutex);
         return updateRepo;
+    }
+
+    std::string GetFixesToken() {
+        std::lock_guard lock(g_mutex);
+        return fixesToken;
     }
 
     bool GetUiEnabled() {

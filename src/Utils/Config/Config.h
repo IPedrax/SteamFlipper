@@ -48,6 +48,12 @@ namespace Config {
     bool GetUpdateEnabled();
     std::string GetUpdateRepo();
 
+    // [fixes].token - a lua.tools bearer token. The fix catalog is readable
+    // without one; downloading a fix is not, and the token belongs to the
+    // user's own account with its own daily cap, so it is theirs to supply and
+    // is never shipped or defaulted.
+    std::string GetFixesToken();
+
     // [ui].enabled - the in-client LUAFlipper UI. Default true.
     bool GetUiEnabled();
     bool GetDiagnosticsPopups();
@@ -81,6 +87,11 @@ namespace Config {
     // carries no pointer back to the tree, so an unset value means "unknown"
     // and the updater refuses to pull rather than guessing a path.
     inline std::string updateRepo;
+
+    // [fixes].token - see GetFixesToken above. Empty means "not configured",
+    // which the Fixes page reports rather than papering over: a download that
+    // 401s is not a network problem and should not be described as one.
+    inline std::string fixesToken;
 
     // [diagnostics] — when false, SteamDiagnostics::ShowWarning stays silent.
     // Signature/IPC specs are published per steamclient hash, and none exist

@@ -785,6 +785,157 @@ namespace {
         return j;
     }
 
+    /* -------------------------------------------------------------- fixes --- */
+
+    // LuaTools' fix catalog. Reading it needs no account: /denuvo/listings and
+    // /denuvo/fixes both answer unauthenticated, and only /denuvo/download is
+    // behind a bearer token. Verified against the live service rather than
+    // assumed, because the whole page is shaped by which half is free.
+    constexpr const char* kFixBase = "https://lua.tools/api/denuvo";
+
+    /**
+     * The games this install has a manifest for that the fix catalog carries.
+     *
+     * Intersected here rather than in the page: the catalog is 1700-odd entries
+     * and half a megabyte, and shipping all of it to a UI that will draw twenty
+     * tiles would spend the whole payload on rows nobody sees. The count of
+     * what was searched is kept, so the page can say what it looked through.
+     *
+     * Also carries this install's own diagnosis per app, the keyless appid
+     * count, because "this manifest registers ownership it cannot decrypt" and
+     * "there is a fix published for this game" are the two things worth knowing
+     * before opening a game, and one request should answer both.
+     */
+    std::string JsonFixCatalog() {
+        auto r = SFPlatform::Http::Execute(L"GET",
+            (std::string(kFixBase) + "/listings").c_str(), nullptr, 0, nullptr,
+            5000, 5000, 10000, 20000, 4u * 1024u * 1024u);
+        if (!r.ok || r.status != 200)
+            return "{\"error\":\"The fix catalog is unreachable\"}";
+
+        // What this install has, and what is wrong with it.
+        struct Local { size_t keyless = 0, keyed = 0; };
+        std::map<std::string, Local> mine;
+        for (const auto& p : LuaFiles()) {
+            const std::string stem = p.stem().string();
+            if (stem.find_first_not_of("0123456789") != std::string::npos) continue;
+            const std::string body = ReadWholeFile(p);
+            Local l;
+            for (size_t i = body.find("addappid("); i != std::string::npos;
+                 i = body.find("addappid(", i + 1)) {
+                const size_t close = body.find(')', i);
+                if (close == std::string::npos) break;
+                // Three arguments means the third is a decryption key; one is
+                // ownership only. Same split JsonManifests draws.
+                (body.substr(i, close - i).find(',') == std::string::npos
+                     ? l.keyless : l.keyed)++;
+            }
+            mine[stem] = l;
+        }
+
+        std::string j = "{\"games\":[";
+        bool first = true;
+        size_t scanned = 0;
+        for (size_t at = r.body.find("\"appid\""); at != std::string::npos;
+             at = r.body.find("\"appid\"", at + 1)) {
+            scanned++;
+            const std::string appid = JsonString(r.body, "appid", at);
+            auto it = mine.find(appid);
+            if (it == mine.end()) continue;
+
+            j += first ? "" : ",";
+            first = false;
+            j += "{\"appid\":\"" + JsonEscape(appid) + "\"";
+            j += ",\"name\":\"" + JsonEscape(JsonString(r.body, "name", at)) + "\"";
+            j += ",\"fixes\":" + std::to_string(JsonNumber(r.body, "fixCount", at));
+            j += ",\"keyless\":" + std::to_string(it->second.keyless);
+            j += ",\"keyed\":" + std::to_string(it->second.keyed) + "}";
+        }
+        j += "],\"scanned\":" + std::to_string(scanned);
+        j += ",\"installed\":" + std::to_string(mine.size()) + "}";
+        return j;
+    }
+
+    // Every fix published for one app, passed through as the service sends it:
+    // the page draws the titles, tags and descriptions verbatim, and rewriting
+    // them here would mean this module deciding what a fix says about itself.
+    std::string JsonFixList(const std::string& appId) {
+        auto r = SFPlatform::Http::Execute(L"GET",
+            (std::string(kFixBase) + "/fixes?appid=" + appId).c_str(), nullptr, 0,
+            nullptr, 5000, 5000, 10000, 20000, 2u * 1024u * 1024u);
+        if (r.ok && r.status == 404) return "{\"fixes\":[]}";
+        if (!r.ok || r.status != 200)
+            return "{\"error\":\"No fix list for this app\"}";
+        return r.body;
+    }
+
+    /**
+     * Fetch one fix archive to disk.
+     *
+     * Downloaded rather than applied. A fix is a zip whose own instructions are
+     * written for a person ("extract to the game folder", "run VBS.cmd, follow
+     * its prompts"), they differ per release, and getting them wrong breaks an
+     * installed game. So this puts the archive somewhere findable and hands the
+     * instructions to the page; deciding what to do with it stays with whoever
+     * read them.
+     *
+     * This is the one endpoint in the catalog that needs an account. Without a
+     * token the service answers 401, which is reported as the missing setting
+     * it is rather than as a network failure.
+     */
+    std::string JsonFixDownload(const std::string& fixId, const std::string& name) {
+        if (fixId.empty()) return "{\"error\":\"no fix id\"}";
+
+        const std::string token = Config::GetFixesToken();
+        if (token.empty()) {
+            return "{\"error\":\"No lua.tools token configured. The catalog is "
+                   "readable without one, but downloading a fix is not. Put "
+                   "your own token in steamflipper.toml as [fixes] token = "
+                   "\\\"...\\\" and restart Steam.\",\"needsToken\":true}";
+        }
+
+        const std::wstring headers =
+            L"Authorization: Bearer " +
+            std::wstring(token.begin(), token.end()) + L"\r\n";
+        auto r = SFPlatform::Http::Execute(L"GET",
+            (std::string(kFixBase) + "/download?fix=" + fixId).c_str(), nullptr, 0,
+            headers.c_str(), 5000, 5000, 10000, 120000, 512u * 1024u * 1024u);
+
+        if (r.ok && (r.status == 401 || r.status == 403))
+            return "{\"error\":\"lua.tools rejected the token. It may be expired, "
+                   "or the daily cap on this account may be spent.\","
+                   "\"needsToken\":true}";
+        if (!r.ok || r.status != 200 || r.body.empty())
+            return "{\"error\":\"The fix could not be downloaded\"}";
+
+        // Under the module's own folder, not the game's: nothing here knows
+        // which of the user's library roots holds the install, and writing into
+        // a game directory on a guess is not a thing to do to files a download
+        // cannot replace.
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::path(g_steamPath) / "steamflipper" / "fixes";
+        std::filesystem::create_directories(dir, ec);
+
+        // The service names the file; anything with a separator in it is a name
+        // that would write outside this folder, so it is replaced rather than
+        // trusted.
+        std::string file = name.empty() ? (fixId + ".zip") : name;
+        if (file.find('/') != std::string::npos ||
+            file.find('\\') != std::string::npos || file == "..")
+            file = fixId + ".zip";
+
+        const std::filesystem::path out = dir / file;
+        std::ofstream f(out, std::ios::binary);
+        if (!f) return "{\"error\":\"Could not write to " +
+                       JsonEscape(dir.string()) + "\"}";
+        f.write(r.body.data(), static_cast<std::streamsize>(r.body.size()));
+        f.close();
+
+        return "{\"ok\":true,\"path\":\"" + JsonEscape(out.string()) +
+               "\",\"bytes\":" + std::to_string(r.body.size()) + "}";
+    }
+
     /**
      * Take a manifest out of service.
      *
@@ -1200,6 +1351,19 @@ namespace {
             return JsonSearch(term);
         }
         if (path == "/api/unlocker/mode") return JsonUnlockerMode(fullPath);
+
+        // Fixes. The catalog and the per-app list are free; the download is the
+        // one call that needs the user's own lua.tools token.
+        if (path == "/api/fixes/catalog") return JsonFixCatalog();
+        if (path == "/api/fixes/list") {
+            const std::string id = QueryParam(fullPath, "appid");
+            if (id.empty()) return "{\"error\":\"no appid\"}";
+            return JsonFixList(id);
+        }
+        if (path == "/api/fixes/download") {
+            return JsonFixDownload(QueryParam(fullPath, "fix"),
+                                   QueryParam(fullPath, "name"));
+        }
         if (path == "/api/cloud")        return JsonCloud();
         if (path == "/api/cloud/enable")  return JsonCloudEnable();
         if (path == "/api/cloud/disable") return JsonCloudDisable();
