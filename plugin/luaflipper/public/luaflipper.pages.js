@@ -3789,25 +3789,21 @@
             drawList();
             return;
           }
-          // Re-read rather than assume: the only interesting question about a
-          // key is whether Hubcap accepts it, and that is not local knowledge.
-          tell("Saved. Checking it with Hubcap...", true);
-          fetch(API + "hubcap/stats")
-            .then(function (r) { return r.json(); })
-            .then(function (st) {
-              data = st || {};
-              input.value = "";
-              input.placeholder = "a key is saved. Type a new one to replace it";
-              drawList();
-              if (st && st.valid) {
-                tell("Key accepted. " + num(st.used) + " of " + num(st.limit) +
-                     " downloads used today.", true);
-              } else {
-                tell(text(st && st.error) || "Hubcap did not accept this key.",
-                     false);
-              }
-            })
-            .catch(function (e) { tell("Saved, but the check failed: " + why(e), false); });
+          // The verdict rides back with the save. Asking again separately used
+          // to race the config file watcher and report a perfectly good key as
+          // rejected, because the second request read a config that had not
+          // reloaded yet.
+          var st = res.stats || {};
+          data = st;
+          input.value = "";
+          input.placeholder = "a key is saved. Type a new one to replace it";
+          drawList();
+          if (st.valid) {
+            tell("Key accepted. " + num(st.used) + " of " + num(st.limit) +
+                 " downloads used today.", true);
+          } else {
+            tell(text(st.error) || "Hubcap did not accept this key.", false);
+          }
         })
         .catch(function (e) {
           save.busyLook(false);

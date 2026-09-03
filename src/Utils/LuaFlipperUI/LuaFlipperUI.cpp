@@ -960,22 +960,32 @@ namespace {
      * Replacing a key means typing the new one, which is what a settings screen
      * does anyway.
      */
-    std::string JsonHubcapStats() {
-        const std::string key = Config::GetHubcapKey();
+    // Shape check, shared by everything that can be handed a key.
+    bool HubcapKeyShaped(const std::string& k) {
+        if (k.size() != 100 || k.compare(0, 4, "smm_") != 0) return false;
+        for (size_t i = 4; i < k.size(); i++) {
+            const char c = k[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
+    }
+
+    /**
+     * What Hubcap says about one key.
+     *
+     * Takes the key rather than reading it from config, because the caller that
+     * has just saved one cannot read it back yet: the file is picked up by a
+     * watcher, so a check that went through config would race the reload and
+     * report a good key as rejected. That is exactly what it did.
+     */
+    std::string HubcapStatsFor(const std::string& key) {
         if (key.empty())
             return "{\"configured\":false" + SourceOrderJson() + "}";
-
-        // Same shape check the download path runs, so a typo is named as a typo
-        // rather than spent on a request that comes back 401.
-        bool shaped = key.size() == 100 && key.compare(0, 4, "smm_") == 0;
-        for (size_t i = 4; shaped && i < key.size(); i++) {
-            const char c = key[i];
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) shaped = false;
-        }
-        if (!shaped)
+        if (!HubcapKeyShaped(key))
             return "{\"configured\":true,\"valid\":false,\"error\":\"A Hubcap key is "
                    "\\\"smm_\\\" followed by 96 hex characters.\"" +
                    SourceOrderJson() + "}";
+
 
         const std::string url =
             "https://hubcapmanifest.com/api/v1/user/stats?api_key=" + key;
@@ -1003,6 +1013,10 @@ namespace {
         return j;
     }
 
+    std::string JsonHubcapStats() {
+        return HubcapStatsFor(Config::GetHubcapKey());
+    }
+
     /**
      * Save the Hubcap key from the page.
      *
@@ -1014,23 +1028,23 @@ namespace {
     std::string JsonHubcapSave(const std::string& fullPath) {
         const std::string key = QueryParam(fullPath, "key");
 
-        if (!key.empty()) {
-            bool shaped = key.size() == 100 && key.compare(0, 4, "smm_") == 0;
-            for (size_t i = 4; shaped && i < key.size(); i++) {
-                const char c = key[i];
-                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) shaped = false;
-            }
-            if (!shaped)
-                return "{\"error\":\"A Hubcap key is \\\"smm_\\\" followed by 96 "
-                       "hex characters.\"}";
-        }
+        if (!key.empty() && !HubcapKeyShaped(key))
+            return "{\"error\":\"A Hubcap key is \\\"smm_\\\" followed by 96 "
+                   "hex characters.\"}";
 
         std::string err;
         if (!WriteConfigKey("hubcap", "key", TomlString(key), err))
             return "{\"error\":\"Could not save: " + JsonEscape(err) + "\"}";
         LOG_INFO("LuaFlipperUI: hubcap key {}", key.empty() ? "cleared" : "saved");
-        return "{\"ok\":true,\"cleared\":" +
-               std::string(key.empty() ? "true" : "false") + "}";
+
+        // The verdict comes back with the save, checked against the key that was
+        // just handed over rather than the one config has caught up to. One
+        // request, one answer, and no window in which a good key reads as bad.
+        std::string j = "{\"ok\":true,\"cleared\":" +
+                        std::string(key.empty() ? "true" : "false") + ",\"stats\":";
+        j += HubcapStatsFor(key);
+        j += "}";
+        return j;
     }
 
     /**
@@ -1066,6 +1080,88 @@ namespace {
             return "{\"error\":\"Could not save: " + JsonEscape(err) + "\"}";
         LOG_INFO("LuaFlipperUI: source order saved as {}", arr);
         return "{\"ok\":true}";
+    }
+
+    /* --------------------------------------------------------- steam urls --- */
+
+    /**
+     * Catch the website's "Activate in HubcapTools" button.
+     *
+     * That button is an <a href="steam://hubcaptools/setapikey/KEY">. The verb
+     * belongs to HubcapTools, a DLL proxy of the same shape as this one that
+     * registers a handler for it, which is why the page says it needs that tool
+     * installed and Steam running. Nothing published lets a second proxy claim
+     * a verb, and the JS side does not see it either: RegisterForRunSteamURL in
+     * SharedJSContext never fires for a verb the client has no handler for.
+     *
+     * But Steam writes every URL it dispatches to its own console log first:
+     *
+     *   ExecuteSteamURL: "steam://hubcaptools/setapikey/smm_..."
+     *
+     * so the line is there whether or not anything handles it. Tailing that is
+     * not elegant, and it is the only route from here that does not mean
+     * hooking an address that changes every client build - the same fragility
+     * that has already cost this project two features.
+     *
+     * Only lines appended after this starts are read. The log holds every key
+     * ever activated, and re-applying an old one on every launch would quietly
+     * undo a key the user changed by hand.
+     */
+    void SteamUrlWatcher() {
+        const std::filesystem::path log =
+            std::filesystem::path(g_steamPath) / "logs" / "console_log.txt";
+
+        // Where to resume from. Starting at the current end skips the history;
+        // a log that gets rotated or truncated resets to its new end rather
+        // than replaying it.
+        std::error_code ec;
+        uintmax_t at = std::filesystem::file_size(log, ec);
+        if (ec) at = 0;
+
+        const std::string marks[] = {
+            "ExecuteSteamURL: \"steam://hubcaptools/setapikey/",
+            "ExecuteSteamURL: \"steam://steamflipper/setapikey/",
+        };
+
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+
+            const uintmax_t size = std::filesystem::file_size(log, ec);
+            if (ec) continue;
+            if (size < at) { at = size; continue; }     // rotated
+            if (size == at) continue;
+
+            std::ifstream f(log, std::ios::binary);
+            if (!f) continue;
+            f.seekg(static_cast<std::streamoff>(at));
+            std::string chunk((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+            at = size;
+
+            for (const std::string& mark : marks) {
+                for (size_t i = chunk.find(mark); i != std::string::npos;
+                     i = chunk.find(mark, i + 1)) {
+                    const size_t from = i + mark.size();
+                    const size_t end = chunk.find('"', from);
+                    if (end == std::string::npos) continue;
+                    const std::string key = chunk.substr(from, end - from);
+                    if (!HubcapKeyShaped(key)) {
+                        LOG_WARN("LuaFlipperUI: setapikey URL carried something "
+                                 "that is not a Hubcap key, ignoring");
+                        continue;
+                    }
+                    if (key == Config::GetHubcapKey()) continue;   // already ours
+
+                    std::string err;
+                    if (WriteConfigKey("hubcap", "key", TomlString(key), err))
+                        LOG_INFO("LuaFlipperUI: adopted the Hubcap key from a "
+                                 "setapikey URL");
+                    else
+                        LOG_WARN("LuaFlipperUI: could not save the key from a "
+                                 "setapikey URL: {}", err);
+                }
+            }
+        }
     }
 
     /* -------------------------------------------------------------- fixes --- */
@@ -1975,6 +2071,7 @@ void Initialize(const char* steamInstallPath) {
 
     std::thread(ServerThread).detach();
     std::thread(InjectorThread).detach();
+    std::thread(SteamUrlWatcher).detach();
 #else
     (void)steamInstallPath;
 #endif
