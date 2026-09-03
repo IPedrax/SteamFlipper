@@ -104,21 +104,21 @@
     d.body.innerHTML = html + "</div>";
 
     /*
-     * The pointer crossing into this window has to reach the tab that opened
-     * it, and cannot get there on its own.
+     * The popup deliberately reports nothing about the pointer.
      *
-     * The tab closes the menu shortly after the pointer leaves it, which is
-     * right for an in-page menu because the menu is under the same pointer.
-     * A separate window is not: leaving the tab means leaving it towards this
-     * window, and the tab sees only the leaving. So this says when the pointer
-     * arrives, in time to cancel that close, and when it leaves for real.
+     * It used to say when the pointer arrived and left, so the tab could keep
+     * the menu open. Both halves misfired. A capturing mouseleave on the
+     * document sees every row's leave, so moving from one item to the next read
+     * as leaving the menu; guarding on relatedTarget did not help, because the
+     * leave events arriving here are synthesised and carry none. The result was
+     * a menu that closed the moment the pointer touched it, which is worse than
+     * the overlap this window exists to avoid.
+     *
+     * Dismissal now comes only from things that are not in doubt: the client
+     * window seeing the pointer somewhere else, an item being picked, and Steam
+     * hiding the window on blur. A menu that lingers is a nuisance; one that
+     * shuts under the pointer cannot be used at all.
      */
-    d.addEventListener("mouseenter", function () {
-      try { fetch(API + "navmenu/keep"); } catch (e) {}
-    }, true);
-    d.addEventListener("mouseleave", function () {
-      try { fetch(API + "navmenu/close"); } catch (e) {}
-    }, true);
 
     // Hover and click are wired here rather than with inline handlers, which
     // this document's CSP would refuse.

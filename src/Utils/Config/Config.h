@@ -68,6 +68,12 @@ namespace Config {
 
     // [ui].enabled - the in-client LUAFlipper UI. Default true.
     bool GetUiEnabled();
+
+    // [ui].popup_menu - draw the nav dropdown as a Steam popup window. Default
+    // true. Off falls back to the in-page menu, which cannot float over a
+    // browser view and so moves the page aside, but has no window of its own
+    // and none of the pointer-tracking that goes with one.
+    bool GetUiPopupMenu();
     bool GetDiagnosticsPopups();
 
     // [manifest] — provider selection lives in ManifestClient (table-driven).
@@ -120,6 +126,7 @@ namespace Config {
 
     // [ui] - the in-client LUAFlipper tab, injected over Steam's CEF debugger.
     inline bool uiEnabled = true;
+    inline bool uiPopupMenu = true;
 
     // [[inject]] - optional DLL injection into matching game processes.
     inline std::vector<InjectDll> injectDlls;

@@ -25,6 +25,7 @@ namespace {
         std::vector<std::string> sourceOrder;
         bool diagnosticsPopups = true;
         bool uiEnabled = true;
+        bool uiPopupMenu = true;
         std::vector<InjectDll> injectDlls;
         CloudSettings cloud;
     };
@@ -67,6 +68,7 @@ namespace {
         sourceOrder            = snapshot.sourceOrder;
         diagnosticsPopups      = snapshot.diagnosticsPopups;
         uiEnabled              = snapshot.uiEnabled;
+        uiPopupMenu            = snapshot.uiPopupMenu;
         injectDlls             = snapshot.injectDlls;
         cloudEnabled           = snapshot.cloud.enabled;
         cloudLibrary           = snapshot.cloud.library;
@@ -209,6 +211,9 @@ namespace {
 
             // [ui]
             if (auto ui = tbl["ui"].as_table()) {
+                if (auto val = (*ui)["popup_menu"].value<bool>()) {
+                    snapshot.uiPopupMenu = *val;
+                }
                 if (auto val = (*ui)["enabled"].value<bool>()) {
                     snapshot.uiEnabled = *val;
                 }
@@ -349,6 +354,11 @@ namespace {
     bool GetUiEnabled() {
         std::lock_guard lock(g_mutex);
         return uiEnabled;
+    }
+
+    bool GetUiPopupMenu() {
+        std::lock_guard lock(g_mutex);
+        return uiPopupMenu;
     }
 
     CloudSettings GetCloudSettings() {

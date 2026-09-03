@@ -1145,6 +1145,10 @@ namespace {
         // Passed through rather than reduced to a boolean: the client window
         // needs those coordinates to tell movement over the popup apart from
         // movement over itself.
+        // Off means the in-page menu, which is what the client window does when
+        // this answers false.
+        if (!Config::GetUiPopupMenu()) return "{\"ok\":false}";
+
         const std::string expr =
             "String((window.__luaflipperMenu && window.__luaflipperMenu.show(" +
             x + "," + y + "," + kMenuItems + ")) || false)";
@@ -1166,12 +1170,25 @@ namespace {
 
     // And left it, for somewhere that is not the tab either.
     std::string JsonNavMenuClose() {
+        LOG_INFO("LuaFlipperUI: nav menu closed (the popup lost the pointer)");
         EvalInTarget("\"Steam\"",
                      "window.__luaflipperMenuClose&&window.__luaflipperMenuClose()");
         return "{\"ok\":true}";
     }
 
-    std::string JsonNavMenuHide() {
+    /*
+     * Every dismissal says who asked for it.
+     *
+     * This menu has been fixed four times against reproductions that all
+     * passed, because injected pointer events are delivered differently from a
+     * real hand and the difference is exactly what the bug lives in. So the
+     * next report does not need a theory: the log names the caller, and the
+     * callers are few enough that the name is the answer.
+     */
+    std::string JsonNavMenuHide(const std::string& fullPath) {
+        const std::string why = QueryParam(fullPath, "why");
+        LOG_INFO("LuaFlipperUI: nav menu hidden ({})",
+                 why.empty() ? "unspecified" : why);
         EvalInTarget("\"SharedJSContext\"",
                      "window.__luaflipperMenu&&window.__luaflipperMenu.hide()");
         return "{\"ok\":true}";
@@ -1878,7 +1895,7 @@ namespace {
         // Fixes. The catalog and the per-app list are free; the download is the
         // one call that needs the user's own lua.tools token.
         if (path == "/api/navmenu/show") return JsonNavMenuShow(fullPath);
-        if (path == "/api/navmenu/hide") return JsonNavMenuHide();
+        if (path == "/api/navmenu/hide") return JsonNavMenuHide(fullPath);
         if (path == "/api/navmenu/keep") return JsonNavMenuKeep();
         if (path == "/api/navmenu/close") return JsonNavMenuClose();
         if (path == "/api/navmenu/pick") return JsonNavMenuPick(fullPath);

@@ -155,7 +155,10 @@
     // behalf, and that lands here looking exactly like leaving.
     nav.container.addEventListener("click", function (ev) {
       if (selfNav) return;
-      if (ev.target !== tab && !tab.contains(ev.target)) closePage();
+      if (ev.target !== tab && !tab.contains(ev.target)) {
+        lastCloseReason = "a stock nav button was clicked";
+        closePage();
+      }
     }, true);
 
     // React re-renders the nav and this runs again to restore the tab; if a
@@ -236,9 +239,12 @@
     hiddenView = null;
   }
 
+  var lastCloseReason = "";
+
   function closeMenu() {
     cancelClose();
-    hidePopupMenu();
+    hidePopupMenu(lastCloseReason || "closeMenu");
+    lastCloseReason = "";
     var m = document.getElementById(MENU_ID);
     if (m) m.remove();
     // Always, with no exception for one of our pages being open. Leaving it
@@ -335,11 +341,14 @@
     setTimeout(function () { done(false); }, 600);
   }
 
-  function hidePopupMenu() {
+  // `why` is carried through to the module's log. Four fixes for this menu have
+  // been aimed at the wrong cause; the next report should not need a guess.
+  function hidePopupMenu(why) {
     if (!popupMenuUp) return;
     popupMenuUp = false;
     popupRect = null;
-    try { fetch(API + "navmenu/hide"); } catch (e) {}
+    try { fetch(API + "navmenu/hide?why=" + encodeURIComponent(why || "closeMenu")); }
+    catch (e) {}
   }
 
   // Called by the module when an item in the popup is clicked. The popup has no
@@ -355,7 +364,10 @@
   window.__luaflipperMenuKeep = function () { cancelClose(); };
 
   // And left the popup for somewhere that is not the tab.
-  window.__luaflipperMenuClose = function () { closeMenu(); };
+  window.__luaflipperMenuClose = function () {
+    lastCloseReason = "the popup reported losing the pointer";
+    closeMenu();
+  };
 
   function openMenu(tab) {
     // A close scheduled by a previous mouseleave must not fire onto the menu
@@ -472,7 +484,9 @@
     var tab = document.getElementById(TAB_ID);
     if (tab && (ev.target === tab || tab.contains(ev.target))) return;
     if (inPopup(ev.clientX, ev.clientY)) { cancelClose(); return; }
-    closeMenu();          // demonstrably elsewhere
+    lastCloseReason = "pointer at " + Math.round(ev.clientX) + "," +
+                      Math.round(ev.clientY) + " outside the menu";
+    closeMenu();
   }, true);
 
   /* --------------------------------------------------------------- page --- */
