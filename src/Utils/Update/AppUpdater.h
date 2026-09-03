@@ -33,4 +33,54 @@ namespace AppUpdater {
     // update still applies on the user's next manual start.
     void RestartSteam();
 
+#if defined(__linux__)
+
+    /*
+     * Linux updates the source tree, not the binary.
+     *
+     * There is no published .so to fetch: the module is built locally by
+     * tools/install_linux.sh, so "up to date" means "the checkout matches the
+     * branch head", and applying an update means fast-forwarding that checkout.
+     * The rebuild stays the user's step -- it needs the 32-bit toolchain, and
+     * the installer refuses to run while Steam is up, which is exactly when
+     * this code is alive.
+     */
+
+    // Absolute path of the running module, from dladdr() on an address inside
+    // it. Falls back to $SF_RUNTIME_PATH and then the installer's own path;
+    // logs which of the three answered. Empty only if all three fail.
+    std::string SelfPath();
+
+    struct SourceCheck {
+        std::string sha;      // commit baked in at build time, or "unknown"
+        std::string branch;   // branch baked in at build time, or "unknown"
+        std::string remote;   // short sha at the branch head, when reachable
+        std::string message;  // first line of that commit's message
+        bool behind = false;
+        std::string reason;   // set when no comparison was possible
+        std::string error;    // set when the lookup itself failed
+    };
+
+    // Compare the baked-in commit against the branch head on GitHub. Network
+    // only, touches nothing on disk, and never throws. An "unknown" baked sha
+    // is reported through `reason` rather than treated as out of date.
+    SourceCheck CheckSource();
+
+    struct PullResult {
+        bool ok = false;
+        std::string sha;      // HEAD of the checkout after the attempt
+        // One of: pulled, already-current, dirty-tree, not-fast-forward,
+        // no-repo, no-git, network-failed, failed.
+        std::string status;
+        std::string repo;     // the checkout that was operated on, when known
+        std::string error;
+    };
+
+    // git -C <[update].repo> pull --ff-only. Refuses on a dirty tree and never
+    // stashes, resets or forces: local work outranks an update. Blocks on the
+    // network, so it belongs on a worker thread.
+    PullResult PullSource();
+
+#endif // __linux__
+
 } // namespace AppUpdater

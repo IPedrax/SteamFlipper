@@ -1,3 +1,14 @@
 #pragma once
 
 #define STEAMFLIPPER_VERSION "@STEAMFLIPPER_VERSION@"
+
+// The commit this module was built from, resolved at configure time.
+//
+// The updater compares this against the branch head rather than comparing
+// version strings: STEAMFLIPPER_VERSION only moves on a release, while the
+// source moves on every commit, so it is the sha that says whether an install
+// is behind. A tree that is not a checkout (a tarball, a vendored copy) leaves
+// these as "unknown", which the updater reports as "cannot compare" instead of
+// guessing that it is out of date.
+#define STEAMFLIPPER_GIT_SHA    "@STEAMFLIPPER_GIT_SHA@"
+#define STEAMFLIPPER_GIT_BRANCH "@STEAMFLIPPER_GIT_BRANCH@"

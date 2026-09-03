@@ -76,11 +76,26 @@ enable_api = true
 popups = true
 
 [update]
-# Check for a newer SteamFlipper build on startup. When a newer build is
-# found it is downloaded, verified (SHA-256) and staged next to Steam; the new
-# DLL loads on the next Steam launch. Set to false to disable the check entirely.
-# Windows only — there is no Linux release artifact to fetch.
+# Check for a newer SteamFlipper on startup. Set to false to disable the check
+# (and the Config page's update panel) entirely.
+#
+# Windows downloads a newer build, verifies it (SHA-256) and stages it next to
+# Steam; the new DLL loads on the next Steam launch.
+#
+# Linux has no release artifact to fetch: the module is built on this machine
+# by tools/install_linux.sh. So the check compares the commit this build came
+# from against the head of that branch on GitHub and reports the difference in
+# the log. Nothing is downloaded and nothing is written.
 enabled = true
+
+# Linux only, and only needed to act on that check. The SteamFlipper source
+# checkout this install was built from — the installed module sits under
+# ~/.local/lib and carries no pointer back to the tree, so it cannot be
+# guessed. With this set, the Config page's "Update source" button runs
+# `git pull --ff-only` here; it refuses on a dirty tree and never resets,
+# stashes or forces. The rebuild stays a deliberate step:
+#     cd <repo> && ./tools/install_linux.sh     (with Steam closed)
+# repo = "/home/you/src/SteamFlipper"
 
 # Additional Lua config directories (optional).
 # Files are loaded after the default <Steam>/config/stplug-in folder.
