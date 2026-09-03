@@ -131,31 +131,6 @@
     return wrap;
   }
 
-  /**
-   * Label/value pages. Cloud, config and status answer the identical {"rows"}
-   * shape, so they share a renderer and differ only in what an empty response
-   * means on that page.
-   *
-   * The label takes the flexible column and the value the fixed one: values are
-   * paths and counts that lose their meaning when truncated, labels do not.
-   */
-  function rowsPage(data, el, empty) {
-    var err = errorEl(data, el);
-    if (err) return err;
-
-    var list = arr(data && data.rows);
-    var wrap = el("div");
-
-    if (!list.length) {
-      wrap.appendChild(el("div", "luaflipper-empty", empty));
-      return wrap;
-    }
-    list.forEach(function (r) {
-      wrap.appendChild(row(el, "", text(r.label), text(r.value)));
-    });
-    return wrap;
-  }
-
   /* ----------------------------------------------------------- unlocker --- */
 
   /**
@@ -2677,262 +2652,138 @@
     return wrap;
   }
 
-  /* -------------------------------------------------------------- cloud --- */
+  /* ------------------------------------------------------------ settings --- */
+
+  /*
+   * Steam's Settings dialog, measured off the live one.
+   *
+   * These are exact values read from the client's own settings window rather
+   * than approximations, because the whole point of this page is that it is not
+   * a second settings screen with its own opinions. Sampled rather than taken
+   * from luaflipper.css for the same reason the store pages sample the store:
+   * a theme that restyles Steam restyles the dialog these came from, and an
+   * alpha wash over the surrounding surface tracks that where a fixed hex does
+   * not. The few that are fixed are the dialog's identity, not its chrome.
+   */
+  var SET = {
+    rail:     "rgba(0,0,0,0.24)",         // the left column behind the sections
+    railText: "rgb(184,188,191)",         // a section that is not current
+    railOn:   "rgba(103,193,245,0.14)",   // and the one that is
+    rule:     "rgba(103,193,245,0.10)",   // hairline between rows and sections
+    field:    "rgba(0,0,0,0.20)",         // a settings row
+    label:    "rgb(220,222,223)",         // its title
+    desc:     "rgb(139,146,154)"          // the line under the title
+  };
 
   /**
-   * The Cloud saves page.
-   *
-   * Apps added by a Lua manifest are not on the account, so Valve's servers
-   * answer their cloud uploads with Access Denied and those games end up with
-   * no cloud at all. SteamFlipper answers the Cloud.* RPCs itself, out of a
-   * folder on this machine, and that backend (src/Utils/CloudSaves) is compiled
-   * into the module.
-   *
-   * Which leaves nothing to install, so the page is a status panel over one
-   * switch. It used to carry a three step ladder for CloudRedirect: a curl
-   * installer, a TOML snippet and an SLSsteam aside. None of that is loaded any
-   * more, and keeping it would document a component this build does not have.
-   *
-   * Same store surfaces as Unlocker and Manage, because this is the third page
-   * of one application and a second skin would read as a second program.
+   * The dialog's header: 22px bold white, the size Steam sets a settings page
+   * in. Not sectionHead(), which is the store's small uppercase rule.
    */
-  function cloudPage(data, el) {
-    // Steam's discount green, the colour this page already prints "free" in.
-    // Used for a condition that is met; an unmet one stays LABEL rather than
-    // going red, because a switch that is off is not a fault.
-    var GOOD = "#a4d007";
-
-    // The panel and the prose stop here rather than filling a maximised window:
-    // a value pinned to the far right of a 2000px row stops reading as the
-    // partner of the label on the left.
-    var COL = "760px";
-
-    // A backend that answered {"error"} knows nothing about the state, so every
-    // value reads "unknown" instead of "no" - which would be a claim.
-    var failed = (data && data.error) ? text(data.error) : "";
-
-    function state(v, yes, no) { return failed ? "unknown" : (v ? yes : no); }
-
-    // `installed` is still in the reply and is now always true, so it says
-    // nothing; `builtin` is what the Backend row reports.
-    var enabled = !failed && !!(data && data.enabled);
-    var active = !failed && !!(data && data.active);
-    var apps = failed ? 0 : num(data && data.apps);
-    var storage = failed ? "" : text(data && data.storage);
-    // Kept only as the fallback for the toggle's reply: /api/cloud/disable
-    // answers without a config path when there was no [cloud] section to edit.
-    var conf = text(data && data.config);
-
-    // Steam's store body behind the top of the page, the same wash Unlocker and
-    // Manage paint. The negative offsets are .luaflipper-body's own 18px/24px
-    // padding, which is what this has to escape to reach the window edges.
-    var wrap = style(el("div"), { position: "relative" });
-    wrap.appendChild(style(el("div"), {
-      position: "absolute", top: "-18px", left: "-24px",
-      width: "calc(100% + 48px)", height: "900px", zIndex: "0",
-      pointerEvents: "none", background: PAGE_WASH
-    }));
-    // Everything else stacks above that wash; without this it paints under.
-    var page = style(el("div"), { position: "relative", zIndex: "1" });
-    wrap.appendChild(page);
-
-    page.appendChild(bigHead(el, "Cloud saves"));
-    page.appendChild(el("div", "luaflipper-sub",
-      "Apps added by a Lua manifest get no Steam Cloud: the account does not " +
-      "own them, so Steam refuses their uploads with Access Denied. " +
-      "SteamFlipper answers those cloud requests itself and keeps the files " +
-      "on this machine."));
-
-    // Above the panel, not instead of it: the rows below still say which facts
-    // are unknown, and the switch under them is worth reaching either way.
-    if (failed) {
-      page.appendChild(style(el("div", "luaflipper-error",
-        "Cloud status unavailable: " + failed), {
-        maxWidth: COL, marginBottom: "16px"
-      }));
-    }
-
-    /* --------------------------------------------------------- status --- */
-
-    var panel = style(el("div"), {
-      background: PANEL, borderRadius: "3px", padding: "4px 14px",
-      maxWidth: COL, marginBottom: "16px"
+  function dialogHead(el, label) {
+    return style(el("div", null, label), {
+      fontSize: "22px", fontWeight: "700", color: "#ffffff",
+      margin: "8px 0 14px", lineHeight: "28px"
     });
-    page.appendChild(panel);
-
-    var firstFact = true;
-
-    /**
-     * One fact: dim uppercase label left, value right, hairline between rows.
-     * Returns the value span, so a row the switch below invalidates can be
-     * corrected instead of left contradicting the button.
-     *
-     * Its own row rather than metaRow's. That one is signed off for the app
-     * page's details table and sets no min-width on its value, so a filesystem
-     * path in it cannot shrink past its own content: the ellipsis never engages
-     * and the row overflows instead. Both properties are needed here, and
-     * flex 1 1 auto rather than the stylesheet's `flex: 1` (which is `1 1 0%`),
-     * because shrinking is weighted by base size and a 0 basis cannot absorb
-     * the negative space a long path creates.
-     */
-    function fact(label, value, ok, full) {
-      var r = style(el("div"), {
-        display: "flex", alignItems: "baseline", gap: "16px", padding: "9px 0",
-        borderTop: firstFact ? "0" : "1px solid rgba(103,193,245,0.10)"
-      });
-      firstFact = false;
-      r.appendChild(style(el("span", null, label), {
-        flex: "0 0 auto", color: LABEL, textTransform: "uppercase",
-        letterSpacing: "0.5px", fontSize: "11px", whiteSpace: "nowrap"
-      }));
-      var v = style(el("span", null, value), {
-        flex: "1 1 auto", minWidth: "0", textAlign: "right", fontSize: "12.5px",
-        color: ok ? GOOD : LABEL,
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-      });
-      // The column clips by design, so anything that can be long has to stay
-      // reachable some other way.
-      if (full) v.title = full;
-      r.appendChild(v);
-      panel.appendChild(r);
-      return v;
-    }
-
-    // Not routed through state(): this one is a fact about the build, not about
-    // the reply, so a status lookup that failed does not make it unknown.
-    fact("Backend", "built in", true);
-
-    var enabledVal = fact("Enabled", state(enabled, "yes", "no"), enabled);
-    // Enabled but not running means the flag was set after this Steam started,
-    // which is the distinction this row exists to draw.
-    fact("Running", state(active, "yes", "no"), active);
-    // Counted by the backend, so it is 0 until the backend is up. "Running: no"
-    // above is what explains a "none" here.
-    fact("Apps covered", state(apps, String(apps), "none"), apps > 0);
-    fact("Storage", state(storage, storage, "unknown"), !!storage, storage);
-
-    /* -------------------------------------------------------- control --- */
-
-    var control = style(el("div"), { maxWidth: COL, marginBottom: "18px" });
-    page.appendChild(control);
-
-    // The button is replaced rather than relabelled when the state flips:
-    // storeBtn captures its resting and hover colours at construction, and the
-    // two states are different colours, so relabelling in place would leave the
-    // hover handlers painting the previous pair.
-    var hold = el("div");
-    control.appendChild(hold);
-
-    // Every outcome lands here in LABEL, not in .luaflipper-error's red. The
-    // expected failure is a config file that could not be written, which is
-    // worth reading rather than alarming about.
-    var told = style(el("div"), {
-      display: "none", fontSize: "12px", lineHeight: "18px", color: LABEL,
-      margin: "8px 0 0", wordBreak: "break-word"
-    });
-    control.appendChild(told);
-
-    function say(msg) {
-      told.textContent = msg;
-      told.style.display = "";
-    }
-
-    /**
-     * Draw the switch for a state: a neutral "Disable cloud saves" when `on`, a
-     * green "Enable cloud saves" when not.
-     *
-     * Both endpoints only flip a flag in steamflipper.toml, which Initialize()
-     * reads at startup, so neither direction takes effect until Steam restarts.
-     *
-     * An unknown state arms to enable. That is what someone whose status box
-     * failed came here to do, and the endpoint is harmless against a flag that
-     * is already true.
-     */
-    function arm(on) {
-      var btn = only(hold, storeBtn(el,
-        on ? "Disable cloud saves" : "Enable cloud saves",
-        on ? DEEP : GREEN, on ? LIFT : GREEN_HOT));
-      // .luaflipper-button is a div, and unlike every other storeBtn on these
-      // pages this one is not in a flex row that shrinks it to fit, so without
-      // this it stretches the full 760.
-      style(btn, { display: "inline-block" });
-
-      btn.addEventListener("click", function () {
-        // The in-flight guard: pointer-events lands synchronously, before any
-        // second click could be dispatched, and every path below ends in a
-        // fresh button rather than this one re-armed.
-        style(btn, { pointerEvents: "none", opacity: "0.55" });
-        btn.textContent = on ? "Disabling" : "Enabling";
-
-        fetch(API + (on ? "cloud/disable" : "cloud/enable"))
-          .then(function (r) { return r.json(); })
-          .then(function (res) {
-            if (!res || typeof res !== "object") {
-              throw new Error("unreadable reply");
-            }
-            // Same state, pressable again, so a refusal is answered by trying
-            // again rather than by a label stuck on "Enabling".
-            if (res.error) { arm(on); say(text(res.error)); return; }
-
-            arm(!on);
-            // The panel would otherwise still read "Enabled: no" directly above
-            // a button now offering to disable it.
-            enabledVal.textContent = on ? "no" : "yes";
-            enabledVal.style.color = on ? LABEL : GOOD;
-            say((on ? "Disabled" : "Enabled") + " in " +
-                (text(res.config) || conf ||
-                 "steamflipper.toml in the Steam folder") +
-                ". It takes effect when Steam restarts.");
-          })
-          // Named as a transport failure: in the same muted line as the config
-          // answers above, an unlabelled one would read as one of them.
-          .catch(function (e) {
-            arm(on);
-            say("Could not reach SteamFlipper: " + why(e));
-          });
-      });
-    }
-
-    arm(enabled);
-
-    /* ------------------------------------------------------- coverage --- */
-
-    // The scope, stated plainly because it is the safety property: an owned
-    // game answered locally would be a save the account's real cloud never
-    // sees, and the manifest list is what keeps that from happening.
-    page.appendChild(style(el("div", null,
-      "Only apps with a manifest in config/stplug-in are answered here. " +
-      "Games the account genuinely owns keep using Valve's cloud and are " +
-      "never touched."), {
-      fontSize: "13px", lineHeight: "20px", maxWidth: COL, marginBottom: "18px"
-    }));
-
-    /* -------------------------------------------------------- warning --- */
-
-    // Under the switch, where whoever just turned this on is reading: local
-    // storage is the whole design, and the cost of it is the one thing they
-    // need before they trust a save to it. Amber rather than
-    // .luaflipper-error's red, because nothing has gone wrong; the class is
-    // kept for its geometry and the colour is overridden.
-    var warn = style(el("div", "luaflipper-error"), {
-      background: "rgba(220,170,60,0.12)",
-      border: "1px solid rgba(220,170,60,0.35)",
-      maxWidth: COL, marginBottom: "18px"
-    });
-    warn.appendChild(style(el("div", null,
-      "Saves for these apps live only on this machine. Nothing copies them " +
-      "anywhere else, so they are gone with the disk they are on."), {
-      lineHeight: "18px"
-    }));
-    warn.appendChild(el("div", "luaflipper-sub",
-      "Point a sync or backup client at the storage folder above to change " +
-      "that."));
-    page.appendChild(warn);
-
-    return wrap;
   }
 
-  /* -------------------------------------------------------------- config --- */
+  /**
+   * A group of settings rows.
+   *
+   * Steam draws consecutive rows as one rounded slab with hairlines between
+   * them rather than as separate cards, so the group owns the background and
+   * the rounding and each row only owns its separator.
+   */
+  function fieldGroup(el) {
+    var g = style(el("div"), {
+      background: SET.field, borderRadius: "3px", overflow: "hidden",
+      marginBottom: "16px"
+    });
+    g.first = true;
+    return g;
+  }
+
+  /**
+   * One settings row: title and optional description on the left, whatever
+   * control belongs to it on the right.
+   *
+   * Geometry from the live dialog: 12px padding, 12px gap, 14px/300 title,
+   * 13px/400 description 4px under it. `control` may be a node or a string,
+   * because half of these rows are a value rather than a button and Steam
+   * renders those the same way.
+   */
+  function field(el, group, label, desc, control) {
+    var r = style(el("div"), {
+      display: "flex", alignItems: "center", gap: "12px", padding: "12px",
+      borderTop: group.first ? "0" : "1px solid " + SET.rule
+    });
+    group.first = false;
+
+    var left = style(el("div"), { flex: "1 1 auto", minWidth: "0" });
+    left.appendChild(style(el("div", null, label), {
+      fontSize: "14px", fontWeight: "300", color: SET.label, lineHeight: "18px"
+    }));
+    if (desc) {
+      left.appendChild(style(el("div", null, desc), {
+        fontSize: "13px", color: SET.desc, lineHeight: "18px", marginTop: "4px"
+      }));
+    }
+    r.appendChild(left);
+
+    var right = style(el("div"), {
+      flex: "0 0 auto", display: "flex", alignItems: "center", gap: "8px",
+      maxWidth: "55%", minWidth: "0"
+    });
+    if (control) {
+      right.appendChild(typeof control === "string"
+        ? style(el("div", null, control), {
+            fontSize: "13px", color: SET.desc, overflow: "hidden",
+            textOverflow: "ellipsis", whiteSpace: "nowrap"
+          })
+        : control);
+    }
+    r.appendChild(right);
+
+    group.appendChild(r);
+    return right;
+  }
+
+  /**
+   * Steam's toggle pill, 38x22 with a 16px radius, off grey and on blue.
+   *
+   * A real switch rather than a button that says "Enable ...": this page is the
+   * settings dialog now, and every other row in that dialog that turns
+   * something on is one of these. `set` is handed back so a caller whose
+   * request failed can put the switch back where it was.
+   */
+  function toggle(el, on, onChange) {
+    var t = style(el("div"), {
+      position: "relative", width: "38px", height: "22px", flex: "0 0 38px",
+      borderRadius: "16px", cursor: "pointer",
+      transition: "background 120ms ease"
+    });
+    var knob = style(el("div"), {
+      position: "absolute", top: "3px", width: "16px", height: "16px",
+      borderRadius: "50%", background: "#ffffff",
+      transition: "left 120ms ease"
+    });
+    t.appendChild(knob);
+
+    var state = !!on;
+    function paint() {
+      t.style.background = state ? "#1a9fff" : "rgba(255,255,255,0.22)";
+      knob.style.left = state ? "19px" : "3px";
+    }
+    paint();
+
+    t.set = function (v) { state = !!v; paint(); };
+    t.addEventListener("click", function () {
+      if (t.busy) return;
+      var next = !state;
+      t.set(next);
+      onChange(next, t);
+    });
+    return t;
+  }
 
   /**
    * The installer command, as something that can actually be copied.
@@ -2953,270 +2804,472 @@
   }
 
   /**
-   * The update panel of the Config page.
+   * A settings button, in the dialog's own flat style.
    *
-   * Split out of the renderer so the label/value rows below it still draw when
-   * this has nothing to work with: version, sha and branch are top-level
-   * fields of /api/config, and a backend that does not send them still has a
-   * config page.
-   *
-   * Same store surfaces as the Cloud page, because this is the second switch
-   * in one application and a second skin would read as a second program.
-   *
-   * What this panel can and cannot do decides its whole wording. The module
-   * Steam has mapped was built on this machine, so an update is a commit
-   * rather than a download, and the green button fast-forwards the source
-   * checkout and stops there. Rebuilding needs the 32-bit toolchain and an
-   * installer that refuses to run while Steam is up - which is exactly when
-   * this page exists - so the success state hands over a command instead of
-   * claiming an update that has not happened yet.
+   * storeBtn is the store's green gradient, which is right on a purchase row
+   * and wrong in a settings dialog: nothing in Steam's dialog is a gradient.
    */
-  function updatePanel(data, el) {
-    // Steam's discount green, the colour the Cloud page prints a met condition
-    // in. An unmet one stays LABEL rather than going red: being behind the
-    // branch is not a fault.
-    var GOOD = "#a4d007";
-    // The panel stops here rather than filling a maximised window, for the
-    // reason the Cloud page's does: a value pinned to the far right of a
-    // 2000px row stops reading as the partner of the label on the left.
-    var COL = "760px";
+  function dialogBtn(el, label) {
+    var b = style(el("div", "luaflipper-button", label), {
+      background: "rgba(255,255,255,0.14)", border: "0", color: "#ffffff",
+      fontSize: "13px", fontWeight: "normal", lineHeight: "30px",
+      padding: "0 14px", borderRadius: "2px", whiteSpace: "nowrap",
+      textAlign: "center", cursor: "pointer"
+    });
+    // Inline styles beat the stylesheet, so .luaflipper-button's own hover rule
+    // stops applying and the hover has to be wired here.
+    b.addEventListener("mouseenter", function () {
+      if (!b.disabledLook) b.style.background = "rgba(255,255,255,0.22)";
+    });
+    b.addEventListener("mouseleave", function () {
+      if (!b.disabledLook) b.style.background = "rgba(255,255,255,0.14)";
+    });
+    b.busyLook = function (on) {
+      b.disabledLook = on;
+      style(b, { pointerEvents: on ? "none" : "auto", opacity: on ? "0.55" : "1" });
+    };
+    return b;
+  }
+
+  /* ------------------------------------------------------------ sections --- */
+
+  /**
+   * Updates.
+   *
+   * What this can and cannot do decides its whole wording. The module Steam has
+   * mapped was built on this machine, so an update is a commit rather than a
+   * download, and the button fast-forwards the source checkout and stops there.
+   * Rebuilding needs the 32-bit toolchain and an installer that refuses to run
+   * while Steam is up, which is exactly when this page exists, so the success
+   * state hands over a command instead of claiming an update that has not
+   * happened yet.
+   */
+  function updatesSection(data, el, pane) {
+    function json(r) { return r.json(); }
 
     var sha = text(data && data.sha);
     var branch = text(data && data.branch);
     var known = !!sha && sha !== "unknown";
 
-    var box = style(el("div"), { maxWidth: COL, marginBottom: "24px" });
-    box.appendChild(sectionHead(el, "Updates"));
+    pane.appendChild(dialogHead(el, "Updates"));
 
-    var panel = style(el("div"), {
-      background: PANEL, borderRadius: "3px", padding: "4px 14px",
-      marginBottom: "12px"
-    });
-    box.appendChild(panel);
+    var g = fieldGroup(el);
+    pane.appendChild(g);
 
-    var firstFact = true;
-
-    /**
-     * One fact: dim uppercase label left, value right, hairline between rows.
-     * Returns the value span, so a reply that arrives later can correct a row
-     * instead of leaving it contradicting the button under it.
-     *
-     * Its own row rather than metaRow's, for the reason the Cloud page gives:
-     * that one is signed off for the app page's details table and sets no
-     * min-width on its value, so a long value cannot shrink past its own
-     * content, the ellipsis never engages and the row overflows instead. Both
-     * properties are needed, and flex 1 1 auto rather than the stylesheet's
-     * `flex: 1` (which is `1 1 0%`), because shrinking is weighted by base
-     * size and a 0 basis cannot absorb the negative space.
-     */
-    function fact(label, value, ok, full) {
-      var r = style(el("div"), {
-        display: "flex", alignItems: "baseline", gap: "16px", padding: "9px 0",
-        borderTop: firstFact ? "0" : "1px solid rgba(103,193,245,0.10)"
-      });
-      firstFact = false;
-      r.appendChild(style(el("span", null, label), {
-        flex: "0 0 auto", color: LABEL, textTransform: "uppercase",
-        letterSpacing: "0.5px", fontSize: "11px", whiteSpace: "nowrap"
+    // The version, not the commit. Someone deciding whether to update wants a
+    // number they can compare, and a sha is only an answer to a question about
+    // git.
+    field(el, g, "Version", "This build, from the VERSION file at the repo root.",
+      style(el("div", null, text(data && data.version) || "unknown"), {
+        fontSize: "14px", color: "#ffffff", fontWeight: "bold"
       }));
-      var v = style(el("span", null, value), {
-        flex: "1 1 auto", minWidth: "0", textAlign: "right", fontSize: "12.5px",
-        color: ok ? GOOD : LABEL,
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-      });
-      // The column clips by design, so anything that can be long has to stay
-      // reachable some other way.
-      if (full) v.title = full;
-      r.appendChild(v);
-      panel.appendChild(r);
-      return v;
-    }
 
-    // Version leads: it is the thing a user is meant to reason about. The
-    // commit stays as a secondary line for a build made between releases, but
-    // nobody has to read a sha to know whether they are current.
-    fact("Version", text(data && data.version) || "unknown", false);
-    var headVal = fact("Latest version", "not checked yet", false);
-    fact("Built from", known ? (sha + (branch ? " on " + branch : ""))
-                             : "no commit, built outside a git tree", false);
-
-    // Appended on the first answer that carries one, rather than reserved
-    // empty: a blank row above the button would read as a fact we are missing.
-    var msgVal = null;
-    function commit(m) {
-      if (msgVal) {
-        msgVal.textContent = m;
-        msgVal.title = m;
-        return;
-      }
-      msgVal = fact("Latest commit", m, false, m);
-    }
-
-    /* --------------------------------------------------------- control --- */
-
-    // The button is replaced rather than relabelled when the state flips:
-    // storeBtn captures its resting and hover colours at construction, and the
-    // two states are different colours, so relabelling in place would leave
-    // the hover handlers painting the previous pair.
-    var hold = el("div");
-    box.appendChild(hold);
-
-    // Every outcome lands here in LABEL, not in .luaflipper-error's red. The
-    // expected ones are "up to date" and "the tree has local changes", both
-    // worth reading and neither worth alarming about.
-    var told = style(el("div"), {
-      display: "none", fontSize: "12px", lineHeight: "18px", color: LABEL,
-      margin: "10px 0 0", wordBreak: "break-word"
+    var latestVal = style(el("div", null, "not checked yet"), {
+      fontSize: "13px", color: SET.desc, textAlign: "right"
     });
-    box.appendChild(told);
+    var checkBtn = dialogBtn(el, "Check for updates");
+    var latestRow = field(el, g, "Latest",
+      "Read from the VERSION file on the tracked branch.", latestVal);
+    latestRow.appendChild(checkBtn);
 
-    function say(msg) {
-      clear(told);
-      told.appendChild(el("div", null, msg));
-      told.style.display = "";
-      return told;
+    if (known) {
+      field(el, g, "Built from",
+        "The commit this module was compiled at" +
+        (branch ? ", tracking " + branch : "") + ".",
+        sha.substring(0, 7));
     }
 
-    function json(r) { return r.json(); }
+    // Under the group rather than in a row: outcomes here run to several
+    // sentences and sometimes carry a command, and a row's right column is
+    // sized for a value.
+    var out = style(el("div"), {
+      display: "none", padding: "12px", borderRadius: "3px",
+      background: SET.field, fontSize: "13px", lineHeight: "19px",
+      marginBottom: "16px"
+    });
+    pane.appendChild(out);
 
-    /** Blue "check", the resting state and the one every failure returns to. */
-    function armCheck(label) {
-      var btn = only(hold, storeBtn(el, label || "Check for updates",
-                                    BLUE, BLUE_HOT));
-      // .luaflipper-button is a div, and unlike the storeBtns on the store
-      // pages this one is not in a flex row that shrinks it to fit, so without
-      // this it stretches the full column.
-      style(btn, { display: "inline-block" });
+    function say(node) {
+      out.style.display = "";
+      only(out, node);
+    }
+    function tell(msg) { say(el("div", null, msg)); }
 
-      btn.addEventListener("click", function () {
-        // The in-flight guard: pointer-events lands synchronously, before any
-        // second click could be dispatched, and every path below ends in a
-        // fresh button rather than this one re-armed.
-        style(btn, { pointerEvents: "none", opacity: "0.55" });
-        btn.textContent = "Checking";
+    checkBtn.addEventListener("click", function () {
+      checkBtn.busyLook(true);
+      checkBtn.textContent = "Checking";
+      latestVal.textContent = "checking";
 
-        fetch(API + "update/check").then(json).then(function (res) {
-          if (!res || typeof res !== "object") {
-            throw new Error("unreadable reply");
-          }
-          if (res.error) { armCheck(); say(text(res.error) + "."); return; }
+      function done(label) {
+        checkBtn.busyLook(false);
+        checkBtn.textContent = label;
+      }
 
-          // A build with no commit behind it. Nothing was compared, so the
-          // row must not claim a verdict either way.
-          if (res.reason) {
-            headVal.textContent = "cannot compare";
-            armCheck();
-            say(text(res.reason) + ".");
-            return;
-          }
+      fetch(API + "update/check").then(json).then(function (res) {
+        if (!res || typeof res !== "object") throw new Error("unreadable reply");
+        if (res.error) {
+          done("Check again");
+          latestVal.textContent = "unknown";
+          tell(text(res.error));
+          return;
+        }
 
-          // Prefer the version; fall back to the sha only when the VERSION
-          // file could not be read, so the row is never blank.
-          headVal.textContent = text(res.remote_version) || text(res.remote) || "unknown";
-          if (res.message) commit(text(res.message));
+        // remote_version is the VERSION file on the branch; remote is the sha
+        // it was read at, which is the only answer available when the branch
+        // predates that file.
+        latestVal.textContent =
+          text(res.remote_version) || text(res.remote) || "unknown";
 
-          // `relation` is the settled ancestry: current / behind / ahead /
-          // diverged, or "" when it could not be worked out. Only "behind" is a
-          // fast-forward the user can actually take, so only it offers the
-          // button. Saying "the branch has moved on" for the other three was
-          // wrong and, worse, offered an update that then no-opped.
-          var rel = text(res.relation);
-          var br = text(res.branch) || "remote";
+        // Four states, not two. Behind is the only one with an action, and
+        // saying "up to date" to a checkout that is ahead or has diverged
+        // would be a claim about work the user has not pushed.
+        var rel = text(res.relation);
+        if (rel === "current") {
+          done("Check again");
+          latestVal.style.color = "#a4d007";
+          tell("This build is current.");
+          return;
+        }
+        if (rel === "ahead") {
+          done("Check again");
+          tell("This checkout is ahead of " + (branch || "the branch") +
+               " by " + plural(num(res.ahead), "commit") +
+               ". There is nothing to pull.");
+          return;
+        }
+        if (rel === "diverged") {
+          done("Check again");
+          tell("This checkout has diverged from " + (branch || "the branch") +
+               ": " + plural(num(res.ahead), "commit") + " here that are not " +
+               "there, and " + plural(num(res.behind_by), "commit") + " there " +
+               "that are not here. Reconcile it in git rather than from a " +
+               "button.");
+          return;
+        }
 
-          if (rel === "ahead" || (!res.behind && rel !== "diverged")) {
-            headVal.style.color = GOOD;
-            armCheck();
-            say(rel === "ahead"
-              ? "This build (" + text(res.version) + ") is newer than " + br +
-                " (" + (text(res.remote_version) || "unknown") + "). Nothing to update."
-              : "SteamFlipper is up to date.");
-            return;
-          }
+        done("Check again");
+        // behind_by is the count; behind is a boolean, and reading it as a
+        // number would offer to pull one commit however far back this is.
+        var box = el("div");
+        box.appendChild(el("div", null,
+          plural(num(res.behind_by), "commit") + " behind " +
+          (branch || "the branch") + "."));
+        var apply = dialogBtn(el, "Pull " + plural(num(res.behind_by), "commit"));
+        style(apply, { display: "inline-block", marginTop: "10px" });
+        box.appendChild(apply);
+        say(box);
 
-          if (rel === "diverged") {
-            // No fast-forward exists, so there is nothing the button could do.
-            headVal.style.color = LINK_TEXT;
-            armCheck();
-            say("This build and " + br + " have diverged: " +
-                plural(num(res.ahead), "commit") + " here, " +
-                plural(num(res.behind_by), "commit") + " there. " +
-                "Reconcile them with git before updating.");
-            return;
-          }
-
-          headVal.style.color = LINK_TEXT;
-          armApply();
-          say(rel === "behind" && res.remote_version
-            ? "Version " + text(res.remote_version) + " is available (this build " +
-              "is " + text(res.version) + "). Updating pulls the source; it does " +
-              "not touch the running client."
-            : "The " + br + " branch has moved on since this build. Updating " +
-              "pulls the source; it does not touch the running client.");
-        }).catch(function (e) {
-          // Named as a transport failure: in the same muted line as the
-          // answers above, an unlabelled one would read as one of them.
-          armCheck();
-          say("Could not reach SteamFlipper: " + why(e));
+        apply.addEventListener("click", function () {
+          apply.busyLook(true);
+          apply.textContent = "Pulling";
+          fetch(API + "update/apply").then(json).then(function (r2) {
+            if (!r2 || typeof r2 !== "object") throw new Error("unreadable reply");
+            if (r2.error) {
+              apply.busyLook(false);
+              apply.textContent = "Try again";
+              tell(text(r2.error));
+              return;
+            }
+            var line = el("div");
+            line.appendChild(el("div", null,
+              "Source updated. The module Steam has loaded is still the old " +
+              "build; the installer cannot run while Steam is up. Close " +
+              "Steam, then build and install it:"));
+            line.appendChild(shellLine(el, text(r2.command) ||
+              "./tools/install_linux.sh"));
+            say(line);
+          }).catch(function (e) {
+            apply.busyLook(false);
+            apply.textContent = "Try again";
+            tell("Could not reach SteamFlipper: " + why(e));
+          });
         });
+      }).catch(function (e) {
+        done("Check again");
+        latestVal.textContent = "unknown";
+        tell("Could not reach SteamFlipper: " + why(e));
       });
-    }
-
-    /** Green "update", offered only once a check said the branch has moved. */
-    function armApply() {
-      var btn = only(hold, storeBtn(el, "Update source", GREEN, GREEN_HOT));
-      style(btn, { display: "inline-block" });
-
-      btn.addEventListener("click", function () {
-        style(btn, { pointerEvents: "none", opacity: "0.55" });
-        btn.textContent = "Updating";
-
-        fetch(API + "update/apply").then(json).then(function (res) {
-          if (!res || typeof res !== "object") {
-            throw new Error("unreadable reply");
-          }
-          // Back to Check rather than back to Update, in both directions.
-          // Every refusal here (local changes, a branch that cannot
-          // fast-forward, no source tree configured) is fixed outside this
-          // window, and a success has nothing left to pull.
-          armCheck("Check again");
-
-          if (res.error) { say(text(res.error) + "."); return; }
-
-          var line = say(res.status === "already-current"
-            ? "The source was already at " + text(res.pulled) + "."
-            : "Source updated to " + text(res.pulled) + ". The running client " +
-              "is unchanged.");
-          line.appendChild(el("div", "luaflipper-sub",
-            "Close Steam, then build and install it:"));
-          line.appendChild(shellLine(el, text(res.command) ||
-            "./tools/install_linux.sh"));
-        }).catch(function (e) {
-          armCheck("Check again");
-          say("Could not reach SteamFlipper: " + why(e));
-        });
-      });
-    }
-
-    armCheck();
-    return box;
+    });
   }
 
   /**
-   * The Config page: the panel that keeps this install current, over the
-   * label/value rows describing what it loaded.
+   * Cloud saves.
    *
-   * The panel goes first because it is the only thing on the page with a
-   * button, and reference does not outrank an action.
+   * Apps added by a Lua manifest are not on the account, so Valve's servers
+   * answer their cloud uploads with Access Denied and those games end up with
+   * no cloud at all. SteamFlipper answers the Cloud.* RPCs itself, out of a
+   * folder on this machine, and that backend is compiled into the module.
+   *
+   * Which leaves nothing to install, so the section is a switch over the facts
+   * that say whether it is doing anything.
+   */
+  function cloudSection(data, el, pane) {
+    // A backend that answered {"error"} knows nothing about the state, so every
+    // value reads "unknown" instead of "no", which would be a claim.
+    var failed = (data && data.error) ? text(data.error) : "";
+    function state(v, yes, no) { return failed ? "unknown" : (v ? yes : no); }
+
+    var enabled = !failed && !!(data && data.enabled);
+    var active = !failed && !!(data && data.active);
+    var apps = failed ? 0 : num(data && data.apps);
+    var storage = text(data && data.storage);
+    var conf = text(data && data.config);
+
+    pane.appendChild(dialogHead(el, "Cloud saves"));
+
+    if (failed) {
+      pane.appendChild(style(el("div", "luaflipper-error",
+        "Cloud status unavailable: " + failed), { marginBottom: "16px" }));
+    }
+
+    var g = fieldGroup(el);
+    pane.appendChild(g);
+
+    // The switch first, because it is the only thing here that decides
+    // anything; the rows under it only report. There is no separate "Enabled"
+    // row: the switch is that row, and a value beside it saying the same thing
+    // twice is one more place for the two to disagree.
+    var told = null;
+
+    var sw = toggle(el, enabled, function (next, t) {
+      t.busy = true;
+      fetch(API + (next ? "cloud/enable" : "cloud/disable"))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          t.busy = false;
+          if (!res || typeof res !== "object") throw new Error("unreadable reply");
+          // Put the switch back: a refusal that leaves it looking flipped is a
+          // switch that lies about the file it failed to write.
+          if (res.error) { t.set(!next); note(text(res.error)); return; }
+          note((next ? "Enabled" : "Disabled") + " in " +
+               (text(res.config) || conf ||
+                "steamflipper.toml in the Steam folder") +
+               ". It takes effect when Steam restarts.");
+        })
+        .catch(function (e) {
+          t.busy = false;
+          t.set(!next);
+          note("Could not reach SteamFlipper: " + why(e));
+        });
+    });
+
+    field(el, g, "Answer cloud saves locally",
+      "Only apps with a manifest in config/stplug-in. Games the account " +
+      "genuinely owns keep using Valve's cloud and are never touched.", sw);
+
+    // Enabled but not running means the flag was set after this Steam started,
+    // which is the distinction this row exists to draw.
+    var runVal = style(el("div", null, state(active, "yes", "no")), {
+      fontSize: "13px", color: active ? "#a4d007" : SET.desc
+    });
+    field(el, g, "Running now",
+      "Takes effect on the next Steam restart, so this can read no while the " +
+      "switch above is on.", runVal);
+
+    field(el, g, "Apps covered",
+      "Manifests this backend is currently answering for.",
+      state(apps, String(apps), "none"));
+
+    var store = field(el, g, "Storage",
+      "Where the saves are kept on this machine.",
+      state(storage, storage, "unknown"));
+    if (storage) store.title = storage;
+
+    // Under the rows, where whoever just turned this on is reading: local
+    // storage is the whole design, and the cost of it is the one thing they
+    // need before they trust a save to it. Amber rather than
+    // .luaflipper-error's red, because nothing has gone wrong; the class is
+    // kept for its geometry and the colour is overridden.
+    var warn = style(el("div", "luaflipper-error"), {
+      background: "rgba(220,170,60,0.12)",
+      border: "1px solid rgba(220,170,60,0.35)", marginBottom: "16px"
+    });
+    warn.appendChild(style(el("div", null,
+      "Saves for these apps live only on this machine. Nothing copies them " +
+      "anywhere else, so they are gone with the disk they are on."), {
+      lineHeight: "18px"
+    }));
+    warn.appendChild(el("div", "luaflipper-sub",
+      "Point a sync or backup client at the storage folder above to change " +
+      "that."));
+    pane.appendChild(warn);
+
+    told = style(el("div"), {
+      display: "none", padding: "12px", borderRadius: "3px",
+      background: SET.field, fontSize: "13px", lineHeight: "19px"
+    });
+    pane.appendChild(told);
+
+    function note(msg) {
+      told.textContent = msg;
+      told.style.display = "";
+    }
+  }
+
+  /**
+   * A section that is nothing but reported facts: what the module loaded, and
+   * what it found.
+   *
+   * /api/config and /api/status both answer {rows:[{label,value}]}, so one
+   * function draws both. There is no description line because the backend does
+   * not send one, and inventing one per row would mean this file deciding what
+   * every setting means.
+   */
+  function rowsSection(el, pane, title, data, empty) {
+    pane.appendChild(dialogHead(el, title));
+
+    if (data && data.error) {
+      pane.appendChild(el("div", "luaflipper-error", text(data.error)));
+      return;
+    }
+    var list = arr(data && data.rows);
+    if (!list.length) {
+      pane.appendChild(el("div", "luaflipper-empty", empty));
+      return;
+    }
+    var g = fieldGroup(el);
+    pane.appendChild(g);
+    list.forEach(function (r) {
+      var right = field(el, g, text(r.label), "", text(r.value));
+      right.title = text(r.value);
+    });
+  }
+
+  /* ------------------------------------------------------------- config --- */
+
+  /**
+   * The Config page: Steam's settings dialog, for this module.
+   *
+   * Updates, cloud saves and status used to be three entries in the dropdown,
+   * which made the dropdown a list of pages rather than a list of places. They
+   * are one thing, the module's own settings, and Steam already has a shape for
+   * that: a rail of sections on the left, one page of rows on the right. This
+   * is that dialog, laid out from measurements off the live one, so the page
+   * reads as part of the client rather than as a panel bolted to it.
+   *
+   * Only Updates and Configuration are drawn from the reply this page was
+   * loaded with. Cloud and Status have their own endpoints and are fetched when
+   * their section is first opened: they report live state, so fetching all
+   * three up front would put two stale panels behind a rail nobody has clicked.
    */
   function configPage(data, el) {
-    var err = errorEl(data, el);
-    if (err) return err;
+    var wrap = style(el("div"), { position: "relative" });
+    wrap.appendChild(style(el("div"), {
+      position: "absolute", top: "-18px", left: "-24px",
+      width: "calc(100% + 48px)", height: "1400px", zIndex: "0",
+      pointerEvents: "none", background: PAGE_WASH
+    }));
 
-    var wrap = el("div");
-    wrap.appendChild(updatePanel(data, el));
-    wrap.appendChild(sectionHead(el, "Configuration"));
-    wrap.appendChild(rowsPage(data, el,
-      "No configuration loaded. steamflipper.toml sits in the Steam directory."));
+    // The dialog itself: rail and pane, filling the page the way the settings
+    // window fills its own. The negative margins escape .luaflipper-body's
+    // padding, because the rail runs to the window edge in Steam's dialog and a
+    // rail floating in from the left would read as a card, not a dialog.
+    var shell = style(el("div"), {
+      position: "relative", zIndex: "1", display: "flex",
+      margin: "-18px -24px", minHeight: "calc(100vh - 120px)"
+    });
+    wrap.appendChild(shell);
+
+    var rail = style(el("div"), {
+      flex: "0 0 198px", background: SET.rail, padding: "24px 0 12px"
+    });
+    shell.appendChild(rail);
+
+    rail.appendChild(style(el("div", null, "LUAFLIPPER"), {
+      color: LINK_TEXT, fontSize: "15px", fontWeight: "bold",
+      letterSpacing: "0.5px", padding: "0 24px", marginBottom: "14px"
+    }));
+
+    var pane = style(el("div"), {
+      flex: "1 1 auto", minWidth: "0", padding: "18px 24px 32px",
+      maxWidth: "760px"
+    });
+    shell.appendChild(pane);
+
+    /*
+     * The sections, and what each needs before it can draw.
+     *
+     * `load` is the endpoint whose reply the section wants; sections without
+     * one are drawn from the page's own reply. Each is built once and then
+     * shown and hidden, so a check that is running or a switch that was just
+     * flipped survives a trip to another section and back.
+     */
+    var SECTIONS = [
+      { name: "Updates",
+        draw: function (p) { updatesSection(data, el, p); } },
+      { name: "Cloud saves", load: "cloud",
+        draw: function (p, got) { cloudSection(got, el, p); } },
+      { name: "Configuration",
+        draw: function (p) {
+          rowsSection(el, p, "Configuration", data,
+            "No configuration loaded. steamflipper.toml sits in the Steam " +
+            "directory.");
+        } },
+      { name: "Status", load: "status",
+        draw: function (p, got) {
+          rowsSection(el, p, "Status", got, "No status reported.");
+        } }
+    ];
+
+    var built = {};
+    var items = {};
+    var current = null;
+
+    function select(name) {
+      if (current === name) return;
+      current = name;
+
+      SECTIONS.forEach(function (s) {
+        var it = items[s.name];
+        style(it, {
+          background: s.name === name ? SET.railOn : "transparent",
+          color: s.name === name ? "#ffffff" : SET.railText
+        });
+        if (built[s.name]) built[s.name].style.display =
+          s.name === name ? "" : "none";
+      });
+
+      if (built[name]) return;
+
+      var sec = null;
+      SECTIONS.forEach(function (s) { if (s.name === name) sec = s; });
+      var host = el("div");
+      built[name] = host;
+      pane.appendChild(host);
+
+      if (!sec.load) { sec.draw(host); return; }
+
+      host.appendChild(el("div", "luaflipper-loading", "Loading…"));
+      fetch(API + sec.load)
+        .then(function (r) { return r.json(); })
+        .then(function (got) { host.innerHTML = ""; sec.draw(host, got); })
+        .catch(function (e) {
+          host.innerHTML = "";
+          host.appendChild(dialogHead(el, name));
+          host.appendChild(el("div", "luaflipper-error",
+            "Could not reach SteamFlipper: " + why(e)));
+        });
+    }
+
+    SECTIONS.forEach(function (s) {
+      var it = style(el("div", null, s.name), {
+        padding: "10px 8px 10px 24px", fontSize: "14px", cursor: "pointer",
+        color: SET.railText
+      });
+      it.addEventListener("mouseenter", function () {
+        if (current !== s.name) it.style.background = "rgba(255,255,255,0.06)";
+      });
+      it.addEventListener("mouseleave", function () {
+        if (current !== s.name) it.style.background = "transparent";
+      });
+      it.addEventListener("click", function () { select(s.name); });
+      items[s.name] = it;
+      rail.appendChild(it);
+    });
+
+    // Updates first: it is the only section with something to decide, and the
+    // rest are reference.
+    select(SECTIONS[0].name);
     return wrap;
   }
 
@@ -3232,16 +3285,10 @@
     manage: manage,
     unlocker: addPage,
     fixes: fixes,
-    // Cloud saves is a switch with a status panel over it, not a label/value
-    // dump: the backend is compiled in, so the only thing to decide on that
-    // page is whether it is on.
-    cloud: cloudPage,
-    // Config carries the self-update panel as well as the settings rows: it is
-    // the page you are already on when you want to know what this build is,
-    // and "what build is this" and "is it current" are one question.
-    config: configPage,
-    status: function (data, el) {
-      return rowsPage(data, el, "No status reported.");
-    }
+    // Config is the settings dialog, and cloud saves, updates and status are
+    // sections inside it rather than pages of their own: they are all answers
+    // to "how is this module set up", and three dropdown entries for one
+    // question made the dropdown a list of pages instead of a list of places.
+    config: configPage
   };
 })();

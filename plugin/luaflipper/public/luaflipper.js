@@ -45,9 +45,7 @@
     { page: "unlocker", label: "Unlocker" },
     { page: "manage",   label: "Manage" },
     { page: "fixes",    label: "Fixes" },
-    { page: "cloud",    label: "Cloud saves" },
-    { page: "config",   label: "Config" },
-    { page: "status",   label: "Status" }
+    { page: "config",   label: "Config" }
   ];
 
   function log() {
@@ -545,8 +543,10 @@
   }
 
   function loadPage(body, page) {
+    // Config asks for its own reply here and fetches /api/cloud and /api/status
+    // itself, when the section that needs them is opened.
     var method = { unlocker: "unlocker", manage: "manifests", fixes: "fixes",
-                   cloud: "cloud", config: "config", status: "status" }[page];
+                   config: "config" }[page];
 
     callBackend(method).then(function (data) {
       body.innerHTML = "";
@@ -596,7 +596,10 @@
           (m.keys || 0) + " key" + (m.keys === 1 ? "" : "s")));
         wrap.appendChild(row);
       });
-    } else if (page === "status") {
+    } else if (page === "config") {
+      // Same {rows:[{label,value}]} shape the status endpoint used to answer
+      // with; this is the fallback for a partial install, so it draws the
+      // reply the page was loaded with and nothing else.
       ((data && data.rows) || []).forEach(function (r) {
         var row = el("div", "luaflipper-row");
         row.appendChild(el("span", "luaflipper-name", r.label));
