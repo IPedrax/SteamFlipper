@@ -7,6 +7,13 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.4 — 2026-09-03
+
+- Builds on Steam Deck. libcurl development headers are no longer needed, which SteamOS cannot supply without unlocking its read-only filesystem
+- The module never linked curl anyway — it loads it at runtime — so the headers only ever supplied a dozen constants, which are vendored now
+- The installer also checks for OpenSSL headers, not just the library, so a missing one is named up front instead of failing later inside CMake
+- Reported in [#1](https://github.com/IPedrax/SteamFlipper/issues/1)
+
 ## 1.1.3 — 2026-09-03
 
 - Fixes the workshop dialog rendering white on the hub, browse and collection pages

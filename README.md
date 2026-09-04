@@ -48,17 +48,17 @@ The Steam **client** is 32-bit, so a multilib toolchain is mandatory. The instal
 ```bash
 # Arch
 sudo pacman -S --needed base-devel cmake ninja git \
-                        gcc-multilib lib32-glibc lib32-openssl lib32-curl
+                        gcc-multilib lib32-glibc lib32-openssl
 
 # Debian / Ubuntu / SteamOS
 sudo dpkg --add-architecture i386 && sudo apt update
 sudo apt install build-essential cmake ninja-build gcc-multilib g++-multilib \
-                 libc6-dev-i386 libssl-dev:i386 libcurl4-openssl-dev:i386
+                 libc6-dev-i386 libssl-dev:i386
 
 # Fedora
 sudo dnf install @development-tools cmake ninja-build \
                  glibc-devel.i686 libstdc++-devel.i686 \
-                 openssl-devel.i686 libcurl-devel.i686
+                 openssl-devel.i686
 ```
 
 ### <img src="assets/icons/layers.svg" width="17" align="absmiddle" alt="" /> Options

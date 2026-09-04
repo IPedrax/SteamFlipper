@@ -20,17 +20,17 @@ package rather than failing later with `file in wrong format`.
 ```bash
 # Arch · Manjaro · CachyOS
 sudo pacman -S --needed base-devel cmake ninja git \
-        gcc-multilib lib32-glibc lib32-openssl lib32-curl
+        gcc-multilib lib32-glibc lib32-openssl
 
 # Debian · Ubuntu · SteamOS
 sudo dpkg --add-architecture i386 && sudo apt update
 sudo apt install build-essential cmake ninja-build gcc-multilib \
-        g++-multilib libc6-dev-i386 libssl-dev:i386 libcurl4-openssl-dev:i386
+        g++-multilib libc6-dev-i386 libssl-dev:i386
 
 # Fedora · Nobara
 sudo dnf install @development-tools cmake ninja-build \
         glibc-devel.i686 libstdc++-devel.i686 \
-        openssl-devel.i686 libcurl-devel.i686
+        openssl-devel.i686
 ```
 
 ### 2. Close Steam

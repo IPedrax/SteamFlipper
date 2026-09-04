@@ -3,7 +3,10 @@
 #include "include/Encoding.h"
 #include "include/Log.h"
 
-#include <curl/curl.h>
+// Not <curl/curl.h>: this file dlopens libcurl and never links it, so the
+// system headers were a build requirement that bought nothing but constants --
+// and one that SteamOS cannot satisfy without unlocking its read-only rootfs.
+#include "curl_min.h"
 #include <dlfcn.h>
 
 #include <chrono>

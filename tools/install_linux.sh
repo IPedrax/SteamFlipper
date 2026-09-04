@@ -157,13 +157,15 @@ done
 
 # The client is 32-bit, so a multilib toolchain is mandatory. Detect it by
 # actually compiling rather than guessing at distro package names.
+# No curl here on purpose. The module dlopens libcurl at runtime and the build
+# vendors the constants it needs, so curl development packages are not required
+# to build -- which matters on SteamOS, where installing them means unlocking
+# the read-only filesystem for headers the next update removes again.
 deps_hint() {
-    warn "  Arch    : pacman -S --needed gcc-multilib lib32-glibc lib32-openssl lib32-curl"
+    warn "  Arch    : pacman -S --needed gcc-multilib lib32-glibc lib32-openssl"
     warn "  Debian  : dpkg --add-architecture i386 && apt update &&"
-    warn "            apt install gcc-multilib g++-multilib libc6-dev-i386 \\"
-    warn "                        libssl-dev:i386 libcurl4-openssl-dev:i386"
-    warn "  Fedora  : dnf install glibc-devel.i686 libstdc++-devel.i686 \\"
-    warn "                        openssl-devel.i686 libcurl-devel.i686"
+    warn "            apt install gcc-multilib g++-multilib libc6-dev-i386 libssl-dev:i386"
+    warn "  Fedora  : dnf install glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686"
 }
 
 if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
@@ -182,6 +184,19 @@ if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -lcrypto -o /dev/null 2>
     warn "with an opaque 'file in wrong format'. Install the 32-bit libraries:"
     deps_hint
     die  "32-bit OpenSSL required"
+fi
+
+# And its headers, which are a separate package on some distributions and a
+# separate failure: find_package(OpenSSL) wants OPENSSL_INCLUDE_DIR, so a system
+# carrying the library but not the headers gets "Could NOT find OpenSSL" from
+# CMake after this script has already said the prerequisites were fine. That is
+# exactly how a Steam Deck reported a failed install, for curl rather than
+# OpenSSL, so the check now covers headers as well as linking.
+if ! echo '#include <openssl/evp.h>
+int main(void){return 0;}' | gcc -m32 -x c - -lcrypto -o /dev/null 2>/dev/null; then
+    warn "32-bit OpenSSL headers are missing — CMake would fail to configure."
+    deps_hint
+    die  "32-bit OpenSSL headers required"
 fi
 say "    32-bit toolchain + libraries OK"
 

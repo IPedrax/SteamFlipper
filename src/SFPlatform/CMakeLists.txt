@@ -53,24 +53,27 @@ else()
         Linux/Trap.cpp
     )
 
-    find_package(CURL REQUIRED)
     find_package(OpenSSL REQUIRED)
     find_package(Threads REQUIRED)
 
-    # Deliberately NOT linking CURL::libcurl. Steam runs inside the
+    # libcurl is not looked for at all, let alone linked. Steam runs inside the
     # steam-runtime, which pins an older libcurl.so.4 (CURL_OPENSSL_3) ahead of
     # the host's (CURL_OPENSSL_4); a link-time dependency makes the loader
     # demand a version tag the runtime cannot supply and kill the Steam client
-    # at startup. Linux/Http.cpp dlopens curl instead, so we take the headers
-    # from the found package but none of its link interface.
+    # at startup. Linux/Http.cpp dlopens curl instead.
+    #
+    # It used to find_package(CURL REQUIRED) anyway, purely for the header. That
+    # cost a Steam Deck its install: SteamOS ships libcurl without development
+    # headers on a read-only rootfs, so a machine with a perfectly good libcurl
+    # to dlopen could not configure. The dozen constants involved are vendored
+    # in Linux/curl_min.h, and tools/curl_abi_test.cpp checks them against the
+    # real header wherever one exists.
     set(OSTPLATFORM_PLATFORM_LIBS
         OpenSSL::Crypto
         Threads::Threads
         ${CMAKE_DL_LIBS}
         funchook
     )
-    set(OSTPLATFORM_CURL_INCLUDE_DIRS
-        $<TARGET_PROPERTY:CURL::libcurl,INTERFACE_INCLUDE_DIRECTORIES>)
 endif()
 
 add_library(SFPlatform STATIC
@@ -85,7 +88,6 @@ target_include_directories(SFPlatform
         ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/..   # src/ — for cross-module private headers
-        ${OSTPLATFORM_CURL_INCLUDE_DIRS} # headers only; curl is dlopen'd (see above)
 )
 
 target_link_libraries(SFPlatform PRIVATE
