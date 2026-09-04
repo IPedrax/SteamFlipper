@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -143,6 +144,35 @@ bool LaunchDetachedHidden(const std::string& commandLine) {
             dup2(devNull, STDERR_FILENO);
             close(devNull);
         }
+
+        /*
+         * Everything above the standard three belongs to the process being
+         * left behind, and a detached child has no business holding any of it.
+         *
+         * This is not tidiness. fork() copies every descriptor, exec keeps the
+         * ones without CLOEXEC, and the child here goes on to launch a whole
+         * process tree -- so a socket the parent was listening on stays bound
+         * for as long as any of that tree lives. The auto-update found it the
+         * hard way: the helper inherited the module's listening socket on
+         * 127.0.0.1:1987 and handed it down through steam.sh to the Steam it
+         * restarted, so the port still had a listener, the new module's bind()
+         * lost the race for it, and every page in the client hung on a request
+         * nothing was left to accept.
+         *
+         * close_range is one syscall for the whole span; the loop is for
+         * kernels before 5.9, where an open file limit in the millions makes
+         * this worth bounding rather than walking blind.
+         */
+#if defined(SYS_close_range)
+        if (syscall(SYS_close_range, 3, ~0U, 0) != 0)
+#endif
+        {
+            const long maxFd = sysconf(_SC_OPEN_MAX);
+            const int stop = (maxFd > 0 && maxFd < 65536) ? static_cast<int>(maxFd)
+                                                          : 65536;
+            for (int fd = 3; fd < stop; fd++) close(fd);
+        }
+
         execl("/bin/sh", "sh", "-c", commandLine.c_str(), nullptr);
         _exit(127);
     }

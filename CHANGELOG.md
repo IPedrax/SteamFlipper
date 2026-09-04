@@ -7,6 +7,14 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.5 — 2026-09-03
+
+- Fixes the 1.0.4 automatic update leaving the client with every page loading forever
+- The update helper inherited the module's listening socket and passed it on to the Steam it restarted
+- So the port stayed bound by a process that was gone, and the new module could not answer on it
+- Detached helpers now close the descriptors they inherit, so nothing they start can hold a socket open on the process that launched them
+- If 1.0.4 already did this to you, close Steam and start it again; nothing was damaged
+
 ## 1.0.4 — 2026-09-03
 
 - Updating is one click: **Config → Updates → Update and restart Steam** pulls, closes Steam, builds, installs and starts it again
