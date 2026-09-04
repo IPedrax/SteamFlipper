@@ -64,6 +64,8 @@ Launch Steam however you normally do. There is one more tab, after your account
 name: **LUAFLIPPER**. It borrows the client's own markup, so a custom Steam skin
 restyles it too.
 
+![The LUAFLIPPER tab in Steam's top navigation bar](assets/walkthrough/tab.png)
+
 No tab means the module did not load. Check
 `grep -i steamflipper ~/.local/share/Steam/logs/bootstrap_log.txt` before
 anything else — and check that step 2 actually happened, since installing over
@@ -84,6 +86,11 @@ exactly as you always would.
 The purchase box has changed: the price is struck through and shown as a 100%
 discount, and the green button now reads **Add to LUAFlipper**.
 
+![A Steam buy box reading -100%, the original price struck through, Free, and a green Add to LUAFlipper button](assets/walkthrough/unlocker.png)
+
+The original price stays struck through on purpose — this is the paid product,
+obtained another way, and hiding it would make the row look like a free game.
+
 This applies only on this tab. Leave it, or open the ordinary Store tab, and
 the store is exactly as Valve shipped it — the integration is a lease the tab
 has to keep renewing, so anything that ends the tab puts the real store back
@@ -102,6 +109,28 @@ the next launch and not before. To confirm what you have, open **LUAFLIPPER →
 Manage** and hover any tile: each shows how many decryption keys and app ids its
 manifest carries, and can be updated or removed. A removal stays undoable until
 the next Steam start.
+
+![The Manage page filtered to one game, showing key counts, the app id, and Update and Remove](assets/walkthrough/manage.png)
+
+---
+
+## Workshop items, the same way
+
+**LUAFLIPPER → Workshop** gives you Steam's real workshop, exactly as the
+Unlocker tab gives you the real store. **Subscribe** on an item's page, and the
+green **+** on any listing row, are rebound to ask first:
+
+![A Steam dialog headed Download with LUAFlipper, offering Download only, Subscribe and download, and Cancel](assets/walkthrough/workshop.png)
+
+**Download only** fetches the files and writes nothing to your account.
+**Subscribe and download** also adds the item to your profile and lets Steam
+keep it updated. The files land in
+`steamapps/workshop/content/<appid>/<id>/`, in whichever library the game
+lives in.
+
+The download is done by the signed-in client itself, so it works for items
+served from a UGC depot — the ones a direct link cannot reach — with no
+SteamCMD and no third-party mirror.
 
 ---
 
