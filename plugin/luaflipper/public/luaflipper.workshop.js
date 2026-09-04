@@ -246,7 +246,64 @@
    * `then` is called with true to subscribe as well, false to only download,
    * and not at all if the user backs out.
    */
+  /**
+   * Whether a class actually paints anything on this page.
+   *
+   * The workshop spans two different UIs. An item's own page is the older web
+   * one and carries newmodal and the btn_*_steamui family; the hub, browse and
+   * collections are the newer design system and carry none of them, so a
+   * dialog built from those class names there is an unstyled <dialog> -- which
+   * the browser renders white on white.
+   */
+  function paints(cls, tag) {
+    var a = document.createElement(tag || "div"), b = document.createElement(tag || "div");
+    b.className = cls;
+    document.body.appendChild(a);
+    document.body.appendChild(b);
+    var ca = getComputedStyle(a), cb = getComputedStyle(b);
+    var differs = ca.backgroundColor !== cb.backgroundColor ||
+                  ca.backgroundImage !== cb.backgroundImage ||
+                  ca.color !== cb.color;
+    a.remove();
+    b.remove();
+    return differs;
+  }
+
+  /**
+   * The page's own look, for when Steam's dialog classes are not on it.
+   *
+   * Read off the live page rather than hardcoded: the surface colour comes
+   * from the body, and the buttons are copied from a real quick-add button
+   * sitting in the listing. So the dialog matches whatever theme is applied,
+   * including one this was never written against, and it does it without
+   * knowing a single class name.
+   */
+  function pageLook() {
+    var bs = getComputedStyle(document.body);
+    var look = {
+      surface: bs.backgroundColor && bs.backgroundColor !== "rgba(0, 0, 0, 0)"
+        ? bs.backgroundColor : "#262b34",
+      ink: bs.color || "#c6d4df",
+      font: bs.fontFamily,
+      green: null
+    };
+    var sample = document.querySelector('button[data-accent-color="green"]');
+    if (sample) {
+      var cs = getComputedStyle(sample);
+      look.green = {
+        backgroundColor: cs.backgroundColor, backgroundImage: cs.backgroundImage,
+        color: cs.color, borderRadius: cs.borderRadius, border: cs.border,
+        fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily
+      };
+    }
+    return look;
+  }
+
   function ask(then) {
+    // Which of the two UIs is under us decides whether the dialog can lean on
+    // Steam's classes or has to take its colours from the page.
+    var native = paints("newmodal");
+
     function div(cls, parent) {
       var d = document.createElement("div");
       if (cls) d.className = cls;
@@ -266,16 +323,44 @@
                           "transform:translate(-50%,-50%);outline:none;margin:0;" +
                           "max-width:min(520px, calc(100% - 40px))";
 
-    div("modal_top_bar", modal);
+    var look = native ? null : pageLook();
+    if (look) {
+      // Steam's classes are absent here, so the dialog is dressed from the page
+      // it is sitting on.
+      modal.style.background = look.surface;
+      modal.style.color = look.ink;
+      modal.style.fontFamily = look.font;
+      modal.style.border = "1px solid rgba(255,255,255,.10)";
+      modal.style.borderRadius = "3px";
+      modal.style.boxShadow = "0 12px 40px rgba(0,0,0,.6)";
+      modal.style.padding = "0";
+    }
+
+    var topBar = div("modal_top_bar", modal);
+    if (look) {
+      topBar.style.cssText = "height:3px;background:linear-gradient(to right," +
+                             "#417a9b,#67c1f5)";
+    }
 
     var headBorder = div("newmodal_header_border", modal);
     var head = div("newmodal_header", headBorder);
     var shut = div("newmodal_close", head);
     var title = div("title_text", head);
     title.textContent = "Download with LUAFlipper";
+    if (look) {
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;" +
+                           "flex-direction:row-reverse;padding:14px 18px;" +
+                           "border-bottom:1px solid rgba(255,255,255,.08)";
+      title.style.cssText = "font-size:17px;font-weight:700;color:#ffffff";
+      shut.style.cssText = "width:16px;height:16px;opacity:.6;background:none;" +
+                           "font:16px/16px sans-serif;text-align:center";
+      shut.textContent = "\u2715";
+    }
 
     var contentBorder = div("newmodal_content_border", modal);
     var content = div("newmodal_content", contentBorder);
+
+    if (look) content.style.cssText = "padding:18px;line-height:1.5";
 
     var says = div("", content);
     says.textContent =
@@ -296,21 +381,36 @@
     }
     function onKey(e) { if (e.key === "Escape") { e.preventDefault(); close(); } }
 
-    function button(cls, words, fn) {
+    function button(cls, words, fn, accent) {
       var b = div(cls + " btn_medium", row);
       var s = document.createElement("span");
       s.textContent = words;
       b.appendChild(s);
       b.style.cursor = "pointer";
+      if (look) {
+        // Copy the page's own green button, then tint the secondaries from it,
+        // so all three belong to the same set as the buttons around them.
+        if (look.green) {
+          for (var k in look.green) if (look.green.hasOwnProperty(k)) b.style[k] = look.green[k];
+        }
+        b.style.padding = "7px 14px";
+        b.style.display = "inline-block";
+        if (accent !== "green") {
+          b.style.backgroundImage = "none";
+          b.style.backgroundColor = accent === "blue"
+            ? "rgba(103,193,245,.20)" : "rgba(255,255,255,.10)";
+          b.style.color = look.ink;
+        }
+      }
       b.addEventListener("click", function () { close(); fn(); });
       return b;
     }
 
     // Green is the primary action in Steam's dialogs, and the primary action
     // here is the one that changes nothing outside this machine.
-    button("btn_green_steamui", "Download only", function () { then(false); });
-    button("btn_blue_steamui", "Subscribe and download", function () { then(true); });
-    button("btn_grey_steamui", "Cancel", function () {});
+    button("btn_green_steamui", "Download only", function () { then(false); }, "green");
+    button("btn_blue_steamui", "Subscribe and download", function () { then(true); }, "blue");
+    button("btn_grey_steamui", "Cancel", function () {}, "grey");
 
     shut.style.cursor = "pointer";
     shut.addEventListener("click", close);
