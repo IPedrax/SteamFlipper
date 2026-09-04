@@ -4,7 +4,7 @@ Every released version, newest first.
 
 **Config → Updates** reads this file from the tracked branch and shows one
 entry: the version you are on, or the one an update would bring. So the format
-is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
+is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
 ## 1.1.5 — 2026-09-04
@@ -16,7 +16,7 @@ beneath it, each short enough to read in a settings panel.
 ## 1.1.4 — 2026-09-03
 
 - Builds on Steam Deck. libcurl development headers are no longer needed, which SteamOS cannot supply without unlocking its read-only filesystem
-- The module never linked curl anyway — it loads it at runtime — so the headers only ever supplied a dozen constants, which are vendored now
+- The module never linked curl anyway (it loads it at runtime), so the headers only ever supplied a dozen constants, which are vendored now
 - The installer also checks for OpenSSL headers, not just the library, so a missing one is named up front instead of failing later inside CMake
 - Reported in [#1](https://github.com/IPedrax/SteamFlipper/issues/1)
 
@@ -41,7 +41,7 @@ beneath it, each short enough to read in a settings panel.
 ## 1.1.0 — 2026-09-03
 
 - New **Workshop** tab: Steam's real workshop, opened as a LUAFlipper tab, the way Unlocker opens the store
-- Subscribe is rebound to ask first — subscribe and download, or download only
+- Subscribe is rebound to ask first: subscribe and download, or download only
 - The dialog is built from Steam's own classes, so a skin or plugin that themes Steam themes it too
 - Downloads are done by the signed-in client itself, so depot-backed items work, not just the legacy ones a direct link can reach
 - No SteamCMD and no third-party mirror
@@ -66,7 +66,7 @@ beneath it, each short enough to read in a settings panel.
 - Steam exits cleanly instead of aborting with a core dump every single time it closes
 - A watcher thread was still joinable when its static destructor ran, and destroying a joinable thread calls `std::terminate`
 - The join is registered at start time now, so it happens before that destructor rather than after
-- Long-standing, and invisible: it fired after Steam had finished its own shutdown, so nothing was lost — but each one uploaded a crash report to Valve
+- Long-standing, and invisible: it fired after Steam had finished its own shutdown, so nothing was lost, but each one uploaded a crash report to Valve
 
 ## 1.0.6 — 2026-09-03
 

@@ -61,7 +61,7 @@ sudo dnf install @development-tools cmake ninja-build \
                  openssl-devel.i686
 ```
 
-**On an atomic image** (Bazzite, Silverblue, Kinoite, SteamOS), `dnf` is a shim that refuses and points at your image's documentation. Build in a container instead — it shares your home directory, so everything still lands on the host:
+**On an atomic image** (Bazzite, Silverblue, Kinoite, SteamOS), `dnf` is a shim that refuses and points at your image's documentation. Build in a container instead. It shares your home directory, so everything still lands on the host:
 
 ```bash
 distrobox create --name steamflipper --image fedora:41
@@ -70,7 +70,7 @@ sudo dnf install -y @development-tools cmake ninja-build git \
                     glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686
 ```
 
-Then clone and run the installer from inside that container. Close Steam **on the host** first — the installer's "Steam is running" check cannot see host processes from inside a container, and installing over a running client is the usual way this goes wrong.
+Then clone and run the installer from inside that container. Close Steam **on the host** first. The installer's "Steam is running" check cannot see host processes from inside a container, and installing over a running client is the usual way this goes wrong.
 
 > Steam must be installed natively. A Flatpak Steam is not supported: the module gets in by replacing a library next to the Steam binary, and in a Flatpak that library belongs to the read-only runtime. The installer detects this and says so.
 
@@ -101,9 +101,9 @@ After installing, Steam has one more tab next to your account name. Hover it for
 
 ![A Steam buy box reading -100%, the original price struck through, Free, and a green Add to LUAFlipper button](assets/walkthrough/unlocker.png)
 
-On the Unlocker tab, a game's purchase box is presented as a 100% discount and the green button installs a manifest. The original price stays struck through on purpose — this is the paid product, obtained another way.
+On the Unlocker tab, a game's purchase box is presented as a 100% discount and the green button installs a manifest. The original price stays struck through on purpose: this is the paid product, obtained another way.
 
-The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab — a navigation, a crashed script, closing it — puts the real store back within seconds. The Store tab is never touched.
+The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab (a navigation, a crashed script, closing it) puts the real store back within seconds. The Store tab is never touched.
 
 Turn the whole thing off with `[ui] enabled = false` in `steamflipper.toml`.
 
@@ -123,7 +123,7 @@ Open **LUAFLIPPER → Workshop** and you get Steam's real workshop, the same way
 
 ![A Steam dialog headed Download with LUAFlipper, offering Download only, Subscribe and download, and Cancel](assets/walkthrough/workshop.png)
 
-The download is done by the signed-in client — the same call the library's own mod manager makes. That matters, because every standalone workshop downloader is working around *not* being Steam. They drive SteamCMD with an anonymous login, which only reaches the games in Steam's dedicated-server sub, or they ask the public API for a direct file URL, which only legacy single-file items have: across a sample of sixty-four popular items, ten of them. Asking the client instead needs no SteamCMD and no mirror, and works for the depot-backed items neither route can fetch.
+The download is done by the signed-in client, the same call the library's own mod manager makes. That matters, because every standalone workshop downloader is working around *not* being Steam. They drive SteamCMD with an anonymous login, which only reaches the games in Steam's dedicated-server sub, or they ask the public API for a direct file URL, which only legacy single-file items have: across a sample of sixty-four popular items, ten of them. Asking the client instead needs no SteamCMD and no mirror, and works for the depot-backed items neither route can fetch.
 
 Downloading is not subscribing. The files land in `steamapps/workshop/content/<appid>/<id>/` in the library the game lives in, and nothing is written to your account. Subscribing is the other button, and it is offered rather than assumed, because a subscription shows on your public profile.
 
@@ -133,13 +133,13 @@ As with the store, the hooks are a lease held only while the Workshop tab is ope
 
 ### Downloading fixes
 
-The fix catalog is readable without an account. Downloading one is not — that endpoint wants a lua.tools session, and the cap of 25 downloads a day is per account. **Sign in with Discord** on the Fixes or Sources page opens Discord's normal authorise page in your browser and lands back on the module's own loopback server. It is PKCE throughout, so the code that comes back is worth nothing without a verifier that never leaves the process, and only the rotating refresh token is stored.
+The fix catalog is readable without an account. Downloading one is not: that endpoint wants a lua.tools session, and the cap of 25 downloads a day is per account. **Sign in with Discord** on the Fixes or Sources page opens Discord's normal authorise page in your browser and lands back on the module's own loopback server. It is PKCE throughout, so the code that comes back is worth nothing without a verifier that never leaves the process, and only the rotating refresh token is stored.
 
 There is nothing to paste. A `[fixes] token` in the config never worked and has been dropped: what that header wants is an access token minted per session, so any value written to a file was stale within the hour.
 
-The same session unlocks three manifest sources — Luie, TwentyTwo Cloud and Skyflare — which are served only through lua.tools' proxy. Ryuu and Sushi stay direct, because routing them through it would spend one of the 25 to fetch bytes that are already free.
+The same session unlocks three manifest sources, Luie, TwentyTwo Cloud and Skyflare, which are served only through lua.tools' proxy. Ryuu and Sushi stay direct, because routing them through it would spend one of the 25 to fetch bytes that are already free.
 
-The archive lands in `<Steam>/steamflipper/fixes/`. Applying it is a separate button, and only ever does the one step every fix opens with: **Extract to game folder**, into the folder Steam chose — found by walking `libraryfolders.vdf`, so a game on another drive works. Anything it replaces is copied to `.sfbak` first, once, so the DLLs the game shipped survive a second fix.
+The archive lands in `<Steam>/steamflipper/fixes/`. Applying it is a separate button, and only ever does the one step every fix opens with: **Extract to game folder**, into the folder Steam chose. That folder is found by walking `libraryfolders.vdf`, so a game on another drive works. Anything it replaces is copied to `.sfbak` first, once, so the DLLs the game shipped survive a second fix.
 
 Everything past extracting stays with whoever read the instructions, because that part differs per release: across a sample of the catalog, 96% of fixes are extract-and-play, and the rest ask for a config edit or an installer run afterwards. If the archive carries a `.cmd`, `.exe` or `.vbs`, the result says so rather than letting *Extracted* read as finished.
 
@@ -214,13 +214,13 @@ It has to be that way round rather than done in place. The installer replaces th
 
 Nothing is forced: a build that fails leaves the previous module installed and starts Steam again anyway. Point `[update] repo` at your checkout for any of it to work.
 
-**Update on startup** on the same page does it unattended, about a minute after Steam opens. Off by default — it closes the client you just opened, which is only reasonable if you chose it. It skips while a game is running, and a version that failed to build is not retried, so a branch that does not compile cannot close Steam on every start and leave you nowhere to turn it off.
+**Update on startup** on the same page does it unattended, about a minute after Steam opens. Off by default, because it closes the client you just opened, which is only reasonable if you chose it. It skips while a game is running, and a version that failed to build is not retried, so a branch that does not compile cannot close Steam on every start and leave you nowhere to turn it off.
 
 ---
 
 ## <img src="assets/icons/settings.svg" width="20" align="absmiddle" alt="" /> After a Steam update
 
-Nothing. Hook addresses are byte offsets keyed by the SHA-256 of `steamclient.so`, and a client update changes every one of them — but the module notices that the file it just hashed has no pattern set and re-derives them itself on that launch. The generator runs from a copy the installer leaves beside the module, outside the steam-runtime, whose `readelf` and pinned libraries would otherwise break it.
+Nothing. Hook addresses are byte offsets keyed by the SHA-256 of `steamclient.so`, and a client update changes every one of them. The module notices that the file it just hashed has no pattern set and re-derives them itself on that launch. The generator runs from a copy the installer leaves beside the module, outside the steam-runtime, whose `readelf` and pinned libraries would otherwise break it.
 
 This used to be the sharpest edge in the whole project: the pattern file stopped matching **silently**, Steam ran normally, and nothing unlocked. It was reported from a Steam Deck, where client updates land often enough that most installs live in the gap between an update and a published pattern set.
 
@@ -231,7 +231,7 @@ steam -shutdown
 ./tools/install_linux.sh --no-build
 ```
 
-Everything ownership injection needs is derived from the binary, so an uncalibrated build still unlocks. A handful of extras — live library refresh among them — are pinned per build and stay off until someone publishes a set for it. The generator says which, and continues rather than refusing.
+Everything ownership injection needs is derived from the binary, so an uncalibrated build still unlocks. A handful of extras, live library refresh among them, are pinned per build and stay off until someone publishes a set for it. The generator says which, and continues rather than refusing.
 
 ---
 
