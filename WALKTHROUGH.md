@@ -3,9 +3,6 @@
 Two parts. The first happens in a terminal and is one command. The second
 happens inside Steam and is one click.
 
-There is an interactive version of this page — pick your distribution, copy
-each command, tick the steps off — but everything it says is below.
-
 > Needs Linux and the Steam client. Nothing is written outside `$HOME`, nothing
 > needs root, and `./tools/install_linux.sh --uninstall` puts Steam back to
 > stock. Budget about ten minutes, nearly all of it compiling.
