@@ -136,17 +136,32 @@
     parent.insertBefore(wrap, price);
     price.style.display = "none";
 
-    // Steam positions the struck-through price absolutely, so it contributes
-    // nothing to the column's width; the column is sized by the final price
-    // instead. That holds for a normal discount, where the final price is the
-    // longer string, and stops holding the moment the final price is the word
-    // "Free", which is narrower than any real price and lets the original spill
-    // left over the badge. Widen the column by the shortfall, measured off the
-    // live layout so it holds for any currency and any theme's font.
-    var short = was.offsetWidth - now.offsetWidth;
-    if (short > 0) {
-      now.style.paddingLeft =
-        (parseFloat(window.getComputedStyle(now).paddingLeft) || 0) + short + "px";
+    /*
+     * Widen the price column until the struck-through price clears the badge.
+     *
+     * Steam positions that price absolutely, inset from the right of a column
+     * whose width is decided by the final price below it. For a real discount
+     * the final price is the longer string and everything fits; the moment the
+     * final price is the word "Free" the original has nowhere to go and spills
+     * left across the -100% badge.
+     *
+     * Measured, not computed. Widening by the difference between the two
+     * strings is the obvious arithmetic and it lands a pixel and a half short,
+     * because it knows nothing about the column's own left padding or the inset
+     * the price sits at. Asking the layout where the two boxes actually ended up
+     * needs neither number, so it holds for any currency, font and theme.
+     *
+     * Looped because a widening can land fractionally short of its own target,
+     * and bounded because a layout that will not converge must not hang the page.
+     */
+    var GUTTER = 6;   // Steam's own inset, reused so the gap reads as deliberate
+    var padLeft = parseFloat(window.getComputedStyle(now).paddingLeft) || 0;
+    for (var pass = 0; pass < 3; pass++) {
+      var over = pct.getBoundingClientRect().right -
+                 was.getBoundingClientRect().left + GUTTER;
+      if (over <= 0.5) break;          // already clear, or close enough to it
+      padLeft += over;
+      now.style.paddingLeft = padLeft + "px";
     }
     undo.push(function () {
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);

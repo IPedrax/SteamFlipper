@@ -7,6 +7,11 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.9 — 2026-09-03
+
+- The struck-through price no longer overlaps the -100% badge on a store page
+- Changelog entries here render as text, instead of showing the markdown around bold and code
+
 ## 1.0.8 — 2026-09-03
 
 - **Update on startup**, opt-in, under Config → Updates: Steam updates itself about a minute after it opens

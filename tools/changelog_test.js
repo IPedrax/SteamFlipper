@@ -34,6 +34,7 @@ function text(v) { return (v === null || v === undefined) ? "" : String(v); }
 var SET = { label: "#l", desc: "#d", field: "#f" };
 var LINK_TEXT = "#link";
 
+var plain = eval("(" + lift("plain", "function findRelease") + ")");
 var findRelease = eval("(" + lift("findRelease", "/**") + ")");
 var drawRelease = eval("(" + lift("drawRelease", "function updatesSection") + ")");
 
@@ -90,6 +91,13 @@ check(out[2] === "available", "the state is badged");
 check(out.filter(function (t) { return t === "\u2022"; }).length ===
       findRelease(md, versions[0]).items.length, "one bullet glyph per item");
 check(pane.kids.length === 1, "one box, not a list of releases");
+
+console.log("Markdown that should not reach the panel");
+var em = findRelease(md, versions[0]).items.map(function (i) { return i.text; }).join(" ");
+check(em.indexOf("**") < 0, "no ** around bold");
+check(em.indexOf("`") < 0, "no backticks around code");
+var lk = findRelease("## 9.9.9\n\n- see [the docs](http://x/y) for more\n", "9.9.9");
+check(lk.items[0].text === "see the docs for more", "links keep their text, drop the url");
 
 console.log("Input the file does not promise");
 check(findRelease("## 1.2.3\n\n- No date.\n", "1.2.3") !== null,

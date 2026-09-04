@@ -3636,6 +3636,23 @@
    * that is all this reads, because a general renderer would be several hundred
    * lines to display a document the file's own header promises to keep simple.
    */
+  /**
+   * Markdown emphasis, removed rather than rendered.
+   *
+   * The file is read by GitHub as well, where **bold** and `code` are the right
+   * way to write it. Here they are three characters of noise around a word, and
+   * honouring them would mean a rich-text renderer for a settings panel. Also
+   * unwraps [text](url), keeping the text: a link nothing can click is worse
+   * than the plain words.
+   */
+  function plain(s) {
+    return text(s)
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .trim();
+  }
+
   function findRelease(md, version) {
     var lines = text(md).split("\n");
     var want = text(version), cur = null, para = [];
@@ -3659,11 +3676,11 @@
       if (!cur) continue;
       if (line.indexOf("- ") === 0) {
         flush(cur);
-        cur.items.push({ bullet: true, text: line.substring(2).trim() });
+        cur.items.push({ bullet: true, text: plain(line.substring(2)) });
         continue;
       }
       if (!line.trim()) { flush(cur); continue; }
-      para.push(line.trim());
+      para.push(plain(line));
     }
     flush(cur);
     return cur && cur.items.length ? cur : null;
