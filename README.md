@@ -76,6 +76,8 @@ sudo dnf install @development-tools cmake ninja-build \
 
 After installing, Steam has one more tab next to your account name. Hover it for the menu; it borrows the client's own markup and class names, so a custom theme restyles it along with everything else.
 
+![The LUAFLIPPER tab in Steam's top navigation bar](assets/walkthrough/tab.png)
+
 | Page | What it is |
 |---|---|
 | **Unlocker** | Steam's real store, opened as this tab. Prices render as a 100% discount and **Add to Cart** installs a manifest instead of adding to the cart. Leave the tab and the store is exactly as Valve shipped it |
@@ -83,6 +85,10 @@ After installing, Steam has one more tab next to your account name. Hover it for
 | **Manage** | Your manifests as a library grid. Hover a game for its key counts and to update or remove it. A removal is undoable until the next Steam start, and deleted then |
 | **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions, downloads the archive, and offers to extract it over the game |
 | **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status. **Updates** shows what a new version changes and applies it in one click |
+
+![A Steam buy box reading -100%, the original price struck through, Free, and a green Add to LUAFlipper button](assets/walkthrough/unlocker.png)
+
+On the Unlocker tab, a game's purchase box is presented as a 100% discount and the green button installs a manifest. The original price stays struck through on purpose — this is the paid product, obtained another way.
 
 The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab — a navigation, a crashed script, closing it — puts the real store back within seconds. The Store tab is never touched.
 
@@ -101,6 +107,8 @@ Switch it on under **Config → Cloud saves**. It takes effect on the next Steam
 ### Workshop downloads
 
 Open **LUAFLIPPER → Workshop** and you get Steam's real workshop, the same way the Unlocker tab gives you the real store. **Subscribe** on an item page, and the green **+** on any listing row, are rebound: they ask first, offering the download on its own or a subscription with it, and do neither until told.
+
+![A Steam dialog headed Download with LUAFlipper, offering Download only, Subscribe and download, and Cancel](assets/walkthrough/workshop.png)
 
 The download is done by the signed-in client — the same call the library's own mod manager makes. That matters, because every standalone workshop downloader is working around *not* being Steam. They drive SteamCMD with an anonymous login, which only reaches the games in Steam's dedicated-server sub, or they ask the public API for a direct file URL, which only legacy single-file items have: across a sample of sixty-four popular items, ten of them. Asking the client instead needs no SteamCMD and no mirror, and works for the depot-backed items neither route can fetch.
 
@@ -251,7 +259,8 @@ SF_DISABLE=1 steam                     # one launch, untouched
 
 | File | Covers |
 |---|---|
-| [`WALKTHROUGH.md`](WALKTHROUGH.md) | How the port works: architecture, hook derivation, known limits |
+| [`WALKTHROUGH.md`](WALKTHROUGH.md) | Installing step by step, then adding your first manifest, with screenshots |
+| [`CHANGELOG.md`](CHANGELOG.md) | Every release, newest first. Config → Updates reads this file and shows it in the client |
 | [`STEAMFLIPPER_INTEGRATION.md`](STEAMFLIPPER_INTEGRATION.md) | Everything an external app or plugin needs to drive SteamFlipper |
 
 ---
