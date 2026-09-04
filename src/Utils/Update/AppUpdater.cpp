@@ -427,6 +427,7 @@ LastUpdate ReadLastUpdate(const std::string& stateDir)
     std::getline(f, u.state);
     std::getline(f, u.when);
     std::getline(f, u.message);
+    std::getline(f, u.version);   // absent in files written before 1.0.8
     return u;
 }
 

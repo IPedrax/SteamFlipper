@@ -91,11 +91,21 @@ enabled = true
 # Linux only, and only needed to act on that check. The SteamFlipper source
 # checkout this install was built from — the installed module sits under
 # ~/.local/lib and carries no pointer back to the tree, so it cannot be
-# guessed. With this set, the Config page's "Update source" button runs
-# `git pull --ff-only` here; it refuses on a dirty tree and never resets,
-# stashes or forces. The rebuild stays a deliberate step:
-#     cd <repo> && ./tools/install_linux.sh     (with Steam closed)
+# guessed. With this set, the Config page's "Update and restart Steam" button
+# pulls (--ff-only, refusing a dirty tree and never resetting, stashing or
+# forcing), then closes Steam, builds, installs and starts Steam again.
 # repo = "/home/you/src/SteamFlipper"
+
+# Do that on startup too, without being asked. Off by default, because it is
+# not a background task: about a minute after Steam opens it closes again,
+# compiles, and comes back. That is a fine trade if you chose it and a hostile
+# surprise otherwise.
+#
+# Needs repo above. Skipped while a game is running, and a version that failed
+# to build here is not tried again -- otherwise a branch that does not compile
+# would close Steam on every start and leave nowhere to turn this back off.
+# The outcome lands in <Steam>/steamflipper/update-status either way.
+# auto_install = true
 
 # Additional Lua config directories (optional).
 # Files are loaded after the default <Steam>/config/stplug-in folder.

@@ -38,8 +38,12 @@ say() { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$*"; }
 # The status file is the whole report. The page that asked for this is inside
 # the Steam that is about to close, so the next session reads the outcome from
 # here: first line the state, second the time, third a sentence.
+# Fourth line is the version this run was for. Nothing displays it; it exists
+# so an unattended update can tell "the build failed" from "the build failed
+# at this exact version, again", and stop retrying the one that cannot work.
 finish() {
-	printf '%s\n%s\n%s\n' "$1" "$(date '+%Y-%m-%d %H:%M')" "$2" >"${STATUS}"
+	printf '%s\n%s\n%s\n%s\n' "$1" "$(date '+%Y-%m-%d %H:%M')" "$2" \
+		"$(cat "${REPO}/VERSION" 2>/dev/null || echo unknown)" >"${STATUS}"
 	say "$1: $2"
 	exit "${3:-0}"
 }

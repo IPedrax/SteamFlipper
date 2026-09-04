@@ -116,6 +116,7 @@ namespace AppUpdater {
         std::string state;    // "ok", "failed", "running", or "" if never run
         std::string when;     // local time the helper finished
         std::string message;  // one sentence, written for the user
+        std::string version;  // the version that run was for
     };
 
     // What the previous helper run did, read from <state>/update-status. The

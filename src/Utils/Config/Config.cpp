@@ -19,6 +19,7 @@ namespace {
         std::vector<std::string> remoteUrlTemplates;
         bool statsEnableApi = true;
         bool updateEnabled = true;
+        bool updateAutoInstall = false;
         std::string updateRepo;
         std::string fixesToken;
         std::string fixesRefreshToken;
@@ -63,6 +64,7 @@ namespace {
         remoteUrlTemplates     = snapshot.remoteUrlTemplates;
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
+        updateAutoInstall      = snapshot.updateAutoInstall;
         updateRepo             = snapshot.updateRepo;
         fixesToken             = snapshot.fixesToken;
         fixesRefreshToken      = snapshot.fixesRefreshToken;
@@ -174,6 +176,9 @@ namespace {
             if (auto update = tbl["update"].as_table()) {
                 if (auto val = (*update)["enabled"].value<bool>()) {
                     snapshot.updateEnabled = *val;
+                }
+                if (auto val = (*update)["auto_install"].value<bool>()) {
+                    snapshot.updateAutoInstall = *val;
                 }
                 if (auto val = (*update)["repo"].value<std::string>()) {
                     snapshot.updateRepo = *val;
@@ -334,6 +339,11 @@ namespace {
     bool GetUpdateEnabled() {
         std::lock_guard lock(g_mutex);
         return updateEnabled;
+    }
+
+    bool GetUpdateAutoInstall() {
+        std::lock_guard lock(g_mutex);
+        return updateAutoInstall;
     }
 
     std::string GetUpdateRepo() {

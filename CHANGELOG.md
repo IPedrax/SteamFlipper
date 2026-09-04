@@ -7,6 +7,14 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.8 — 2026-09-03
+
+- **Update on startup**, opt-in, under Config → Updates: Steam updates itself about a minute after it opens
+- Off by default, because it closes the client you just opened
+- Skipped while a game is running
+- A version that failed to build here is never retried, so a branch that does not compile cannot close Steam on every start
+- Also settable as `[update] auto_install = true`
+
 ## 1.0.7 — 2026-09-03
 
 - Steam exits cleanly instead of aborting with a core dump every single time it closes

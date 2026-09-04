@@ -46,6 +46,7 @@ namespace Config {
     CloudSettings GetCloudSettings();
     bool GetStatsEnableApi();
     bool GetUpdateEnabled();
+    bool GetUpdateAutoInstall();
     std::string GetUpdateRepo();
 
     // [fixes].token - a lua.tools bearer token. The fix catalog is readable
@@ -106,6 +107,12 @@ namespace Config {
 
     // [update] - self-update check on startup (staged for next Steam launch).
     inline bool updateEnabled = true;
+
+    // [update].auto_install - do the whole update on startup, unasked: pull,
+    // close Steam, build, install, start again. Off by default and opt-in for
+    // a reason -- it closes the client a minute after it opened, which is only
+    // acceptable to someone who chose it.
+    inline bool updateAutoInstall = false;
 
     // [update].repo - the SteamFlipper source checkout this install was built
     // from. Not derivable: the installed module sits under ~/.local/lib and

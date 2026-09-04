@@ -3952,6 +3952,55 @@
       });
     });
 
+    /*
+     * Update on startup, off unless it is asked for.
+     *
+     * Under the manual check rather than above it, because it is the same job
+     * done unattended and nobody turns it on before they have seen it work
+     * once. The row says what it actually does -- the client goes away and
+     * comes back -- since that is the part worth knowing before agreeing to it.
+     */
+    var autoNote = style(el("div", null, ""), {
+      display: "none", fontSize: "12px", color: SET.desc, marginBottom: "14px"
+    });
+
+    fetch(API + "update/autoinstall").then(json).then(function (a) {
+      var sw = toggle(el, !!(a && a.auto), function (next, t) {
+        t.busy = true;
+        fetch(API + "update/autoinstall?set=" + (next ? "1" : "0"))
+          .then(json)
+          .then(function (res) {
+            t.busy = false;
+            if (!res || res.error) {
+              // Put it back: a switch left looking flipped is a switch lying
+              // about the file it did not write.
+              t.set(!next);
+              autoNote.style.display = "";
+              autoNote.textContent = text(res && res.error) ||
+                                     "The setting could not be saved.";
+              return;
+            }
+            autoNote.style.display = "";
+            autoNote.textContent = next
+              ? "On. Steam will update itself about a minute after it starts, " +
+                "unless a game is running."
+              : "Off. Updates happen only when you ask for them here.";
+          })
+          .catch(function (e) {
+            t.busy = false;
+            t.set(!next);
+            autoNote.style.display = "";
+            autoNote.textContent = "Could not reach SteamFlipper: " + why(e);
+          });
+      });
+      field(el, g, "Update on startup",
+            "Does all of the above without being asked, shortly after Steam " +
+            "opens: Steam closes, the new build compiles, and Steam starts " +
+            "again. Skipped while a game is running, and a version that fails " +
+            "to build is not retried.", sw);
+      g.appendChild(autoNote);
+    }).catch(skip);
+
     // Loaded without being asked for, unlike the check above it: it costs one
     // request to a static file, and "what changed" is half of why anyone opens
     // this page.

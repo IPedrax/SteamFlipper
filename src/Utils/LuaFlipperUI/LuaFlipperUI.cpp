@@ -2159,6 +2159,28 @@ namespace {
         return j;
     }
 
+    /**
+     * Read or set [update] auto_install.
+     *
+     * One endpoint for both because the switch needs the current value to draw
+     * and the new one to save, and they are the same setting. The reply after
+     * a write reports what was asked for rather than re-reading: the config
+     * watcher reloads on its own schedule, and answering from a value that has
+     * not landed yet would show the switch snapping back.
+     */
+    std::string JsonAutoInstall(const std::string& set) {
+        if (set.empty()) {
+            return std::string("{\"auto\":") +
+                   (Config::GetUpdateAutoInstall() ? "true" : "false") + "}";
+        }
+        const bool on = (set == "1");
+        std::string err;
+        if (!WriteConfigKey("update", "auto_install", on ? "true" : "false", err))
+            return "{\"error\":\"" + JsonEscape(err) + "\"}";
+        LOG_INFO("LuaFlipperUI: [update] auto_install = {}", on);
+        return std::string("{\"ok\":true,\"auto\":") + (on ? "true" : "false") + "}";
+    }
+
     // The previous helper run, for the page to report once Steam is back.
     std::string JsonLastUpdate() {
         const AppUpdater::LastUpdate u = AppUpdater::ReadLastUpdate(StateDir().string());
@@ -2410,6 +2432,8 @@ namespace {
         if (path == "/api/update/apply")
             return JsonSourceApply(QueryParam(fullPath, "auto") == "1");
         if (path == "/api/update/last") return JsonLastUpdate();
+        if (path == "/api/update/autoinstall")
+            return JsonAutoInstall(QueryParam(fullPath, "set"));
         if (path == "/api/assets") {
             const std::string appId = QueryParam(fullPath, "appid");
             if (appId.empty()) return "{\"error\":\"no appid given\"}";
@@ -2682,6 +2706,71 @@ namespace {
 
 } // namespace
 
+/**
+ * Update on startup, if that was asked for.
+ *
+ * Off unless [update] auto_install says otherwise, because it is not a quiet
+ * background task: it closes the client a minute after it opened, builds, and
+ * starts it again. That is a fine trade for someone who chose it and a hostile
+ * surprise for anyone else.
+ *
+ * Startup is the right moment for it -- nothing is running yet, and the
+ * alternative is interrupting a session later -- but it is not the right
+ * instant, so it waits for Steam to finish coming up first.
+ */
+void AutoUpdateThread() {
+    // Long enough for the client to be usable, so a machine that updates on
+    // every start still shows something before it goes away again, and short
+    // enough to be before anyone has launched a game.
+    std::this_thread::sleep_for(std::chrono::seconds(45));
+
+    if (!Config::GetUpdateAutoInstall()) return;
+    if (Config::GetUpdateRepo().empty()) {
+        LOG_INFO("AutoUpdate: [update] auto_install is on but repo is unset");
+        return;
+    }
+
+    // A game means Steam is doing the thing it exists for. Nothing here is
+    // worth killing that; the next start will ask again.
+    if (std::system("pgrep -x reaper >/dev/null 2>&1") == 0) {
+        LOG_INFO("AutoUpdate: a game is running, leaving it alone");
+        return;
+    }
+
+    const AppUpdater::SourceCheck c = AppUpdater::CheckSource();
+    if (c.relation != "behind") {
+        LOG_INFO("AutoUpdate: {} vs {} -> {}, nothing to do",
+                 c.version, c.remoteVersion, c.relation);
+        return;
+    }
+
+    /*
+     * Do not retry a version that already failed to build.
+     *
+     * Without this, a branch that does not compile turns "update on startup"
+     * into a machine that closes Steam, fails, reopens, and does it again
+     * forever -- and the user cannot reach the setting to turn it off, because
+     * the client keeps going away. The version is the key rather than a flag,
+     * so the next release still gets its chance.
+     */
+    const AppUpdater::LastUpdate last =
+        AppUpdater::ReadLastUpdate(StateDir().string());
+    if (last.state == "failed" && !last.version.empty() &&
+        last.version == c.remoteVersion) {
+        LOG_WARN("AutoUpdate: {} already failed to build here, not retrying it",
+                 c.remoteVersion);
+        return;
+    }
+
+    LOG_INFO("AutoUpdate: {} is available, updating", c.remoteVersion);
+    const AppUpdater::PullResult p = AppUpdater::PullSource();
+    if (!p.ok) {
+        LOG_WARN("AutoUpdate: pull refused ({}): {}", p.status, p.error);
+        return;
+    }
+    AppUpdater::LaunchAutoUpdate(StateDir().string());
+}
+
 void Initialize(const char* steamInstallPath) {
 #if defined(__linux__)
     g_steamPath = steamInstallPath ? steamInstallPath : "";
@@ -2691,6 +2780,10 @@ void Initialize(const char* steamInstallPath) {
     // its undo window closed when Steam restarted. Behind the gates it would
     // survive forever on an install that later turned the UI off.
     SweepRemoved();
+
+    // Ahead of the UI gates as well: updating the module is not a client-UI
+    // feature, and an install with [ui] enabled = false still wants its fixes.
+    std::thread(AutoUpdateThread).detach();
 
     // The downloader offers lua.tools' proxied sources only while a session
     // exists, and the session lives here, so it is handed a way to ask.

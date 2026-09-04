@@ -126,8 +126,10 @@ echo "The status file"
 # compiling is indistinguishable from one that died.
 check "$(has "${TMP}/state_ok/update.log" "repo ${REPO}")" \
       "the log names what it worked on"
-check "$(is "$(wc -l <"${TMP}/state_ok/update-status")" 3)" \
-      "three lines: state, time, sentence"
+check "$(is "$(wc -l <"${TMP}/state_ok/update-status")" 4)" \
+      "four lines: state, time, sentence, version"
+check "$(is "$(sed -n 4p "${TMP}/state_ok/update-status")" "9.9.9")" \
+      "the fourth line is the version, so a repeat failure can be skipped"
 
 if [[ "${fails}" -eq 0 ]]; then echo; echo "all passed"; else echo; echo "${fails} FAILED"; fi
 exit $(( fails > 0 ? 1 : 0 ))

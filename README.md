@@ -177,6 +177,8 @@ It has to be that way round rather than done in place. The installer replaces th
 
 Nothing is forced: a build that fails leaves the previous module installed and starts Steam again anyway. Point `[update] repo` at your checkout for any of it to work.
 
+**Update on startup** on the same page does it unattended, about a minute after Steam opens. Off by default — it closes the client you just opened, which is only reasonable if you chose it. It skips while a game is running, and a version that failed to build is not retried, so a branch that does not compile cannot close Steam on every start and leave you nowhere to turn it off.
+
 ---
 
 ## <img src="assets/icons/settings.svg" width="20" align="absmiddle" alt="" /> After a Steam update
