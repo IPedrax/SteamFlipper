@@ -2109,19 +2109,56 @@ namespace {
      * Nothing here is destructive: a dirty tree or a non-fast-forward stops
      * the operation instead of being stashed, reset or forced past.
      */
-    std::string JsonSourceApply() {
+    std::filesystem::path StateDir() {
+        return std::filesystem::path(g_steamPath) / "steamflipper";
+    }
+
+    /**
+     * Pull, and then either finish the job or say how to.
+     *
+     * `automatic` hands the rest to a detached helper: it closes Steam, builds,
+     * installs and starts Steam again. That sequence cannot happen in here --
+     * the installer replaces the module that is running this code, so Steam has
+     * to be gone first, which means whatever does it has to outlive the process
+     * that asked.
+     *
+     * Which is also why the reply is thin. Once the helper is up, this process
+     * has seconds to live and no way to report what happens after; the helper
+     * writes <Steam>/steamflipper/update-status and the next session reads it.
+     */
+    std::string JsonSourceApply(bool automatic) {
         const AppUpdater::PullResult p = AppUpdater::PullSource();
         if (!p.ok) {
             return "{\"error\":\"" + JsonEscape(p.error) + "\",\"status\":\"" +
                    JsonEscape(p.status) + "\"}";
         }
+
         std::string j = "{\"ok\":true";
         j += ",\"pulled\":\"" + JsonEscape(p.sha) + "\"";
         j += ",\"status\":\"" + JsonEscape(p.status) + "\"";
-        j += ",\"note\":\"run ./tools/install_linux.sh with Steam closed\"";
+
+        if (automatic) {
+            if (AppUpdater::LaunchAutoUpdate(StateDir().string()))
+                return j + ",\"automatic\":true}";
+            // Fall through to the manual instructions rather than reporting a
+            // failure: the pull did happen, and the only thing lost is who runs
+            // the installer.
+            j += ",\"automatic\":false";
+            j += ",\"note\":\"the helper could not be started\"";
+        }
+
         j += ",\"command\":\"" +
              JsonEscape("cd " + p.repo + " && ./tools/install_linux.sh") + "\"}";
         return j;
+    }
+
+    // The previous helper run, for the page to report once Steam is back.
+    std::string JsonLastUpdate() {
+        const AppUpdater::LastUpdate u = AppUpdater::ReadLastUpdate(StateDir().string());
+        if (u.state.empty()) return "{\"state\":\"\"}";
+        return "{\"state\":\"" + JsonEscape(u.state) +
+               "\",\"when\":\"" + JsonEscape(u.when) +
+               "\",\"message\":\"" + JsonEscape(u.message) + "\"}";
     }
 
     /**
@@ -2363,7 +2400,9 @@ namespace {
                        "GitHub.\"}";
             return "{\"markdown\":\"" + JsonEscape(md) + "\"}";
         }
-        if (path == "/api/update/apply") return JsonSourceApply();
+        if (path == "/api/update/apply")
+            return JsonSourceApply(QueryParam(fullPath, "auto") == "1");
+        if (path == "/api/update/last") return JsonLastUpdate();
         if (path == "/api/assets") {
             const std::string appId = QueryParam(fullPath, "appid");
             if (appId.empty()) return "{\"error\":\"no appid given\"}";

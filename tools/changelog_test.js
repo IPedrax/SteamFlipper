@@ -15,9 +15,12 @@ var ROOT = path.join(__dirname, "..");
 var SRC = path.join(ROOT, "plugin/luaflipper/public/luaflipper.pages.js");
 
 var src = fs.readFileSync(SRC, "utf8");
-var at = src.indexOf("function changelog(md, mine, el, pane)");
-var end = src.indexOf("\n  function updatesSection", at);
-if (at < 0 || end < 0) { console.log("FAIL could not find changelog()"); process.exit(1); }
+function lift(name, stop) {
+  var a = src.indexOf("function " + name + "(");
+  var b = src.indexOf("\n  " + stop, a);
+  if (a < 0 || b < 0) { console.log("FAIL could not find " + name); process.exit(1); }
+  return src.substring(a, b);
+}
 
 // The stubs. Nodes remember their text and children so the result can be read
 // back as a tree rather than as a DOM.
@@ -31,7 +34,8 @@ function text(v) { return (v === null || v === undefined) ? "" : String(v); }
 var SET = { label: "#l", desc: "#d", field: "#f" };
 var LINK_TEXT = "#link";
 
-var changelog = eval("(" + src.substring(at, end) + ")");
+var findRelease = eval("(" + lift("findRelease", "/**") + ")");
+var drawRelease = eval("(" + lift("drawRelease", "function updatesSection") + ")");
 
 var fails = 0;
 function check(ok, what) {
@@ -47,61 +51,54 @@ function walk(n, out) {
 // The repo's own file, which is the one that gets published and therefore the
 // one the page will be handed.
 var md = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
+var versions = md.match(/^## \S+/gm).map(function (h) { return h.slice(3); });
 
-console.log("The published changelog, read as 1.0.1");
+console.log("Every release in the published file");
+versions.forEach(function (v) {
+  var e = findRelease(md, v);
+  check(!!e, v + " is found");
+  if (!e) return;
+  check(e.version === v, v + " reports its own version");
+  check(/^\d{4}-\d{2}-\d{2}$/.test(e.date), v + " has a date, split off the heading");
+  check(e.items.length > 0 && e.items.every(function (i) { return i.bullet; }),
+        v + " is all bullets (" + e.items.length + ")");
+  check(e.items.every(function (i) { return i.text && i.text.indexOf("- ") !== 0; }),
+        v + " bullets keep no markup");
+  check(e.items.every(function (i) { return i.text.length < 160; }),
+        v + " bullets stay short enough for a settings panel");
+});
+
+console.log("Only that release");
+var e = findRelease(md, versions[1]);
+check(e.items.join(" ").indexOf(versions[0]) < 0, "the entry above does not bleed in");
+check(findRelease(md, versions[0]).items.length !==
+      findRelease(md, versions[1]).items.length ||
+      versions.length < 2, "entries are distinct");
+check(findRelease(md, "9.9.9") === null, "a version not in the file is null");
+check(findRelease("", "1.0.0") === null, "an empty file is null");
+check(findRelease(md, versions[0]).items.join(" ").indexOf("load-bearing") < 0,
+      "the file's own preamble is never a release");
+
+console.log("Drawing it");
 var pane = el("div");
-var ok = changelog(md, "1.0.1", el, pane);
-check(ok === true, "parsed");
-check(pane.kids.length === 4, "four releases, one box each (got " +
-      pane.kids.length + ")");
-
-var heads = pane.kids.map(function (b) { return walk(b.kids[0], []); });
-check(JSON.stringify(heads.map(function (h) { return h[0]; })) ===
-      '["1.0.3","1.0.2","1.0.1","1.0.0"]', "newest first, versions read off");
-check(heads[0][1] === "2026-09-03", "the date is split from the version");
-check(heads[0][2] === "newer" && heads[1][2] === "newer",
-      "releases above this build are marked newer");
-check(heads[2][2] === "this build", "the running version is marked");
-check(heads[3].length === 2, "older releases carry no badge");
-check(pane.kids[3].style.opacity === "0.7", "history is dimmed");
-check(pane.kids[2].style.opacity === "1", "this build is not");
-
-var body = walk(pane.kids[0], []);
-check(body.length > 4, "1.0.3 kept its paragraphs (" + (body.length - 3) + ")");
-check(body.join(" ").indexOf("## ") < 0, "no heading markup leaked into text");
-check(body.join(" ").indexOf("Every released version") < 0,
-      "the file's own preamble is not a release");
-check(body[3].indexOf("Downloading a fix works.") === 0,
-      "a paragraph starts where the file does");
-check(body[3].indexOf("\n") < 0, "wrapped lines are rejoined into one line");
-
-console.log("On the newest build");
-pane = el("div");
-changelog(md, "1.0.3", el, pane);
-heads = pane.kids.map(function (b) { return walk(b.kids[0], []); });
-check(heads[0][2] === "this build", "the top entry is marked, not 'newer'");
-check(heads.filter(function (h) { return h[2] === "newer"; }).length === 0,
-      "nothing is offered as an update");
-
-console.log("On a version the file does not mention");
-pane = el("div");
-changelog(md, "0.9.9", el, pane);
-heads = pane.kids.map(function (b) { return walk(b.kids[0], []); });
-check(heads.every(function (h) { return h[2] === "newer"; }),
-      "every release reads as newer");
+drawRelease(findRelease(md, versions[0]), "available", el, pane);
+var out = walk(pane, []);
+check(out[0] === versions[0], "the version leads");
+check(out[2] === "available", "the state is badged");
+check(out.filter(function (t) { return t === "\u2022"; }).length ===
+      findRelease(md, versions[0]).items.length, "one bullet glyph per item");
+check(pane.kids.length === 1, "one box, not a list of releases");
 
 console.log("Input the file does not promise");
-check(changelog("", "1.0.3", el, el("div")) === false, "empty is refused");
-check(changelog("# Changelog\n\nno releases yet\n", "1.0.3", el, el("div")) === false,
-      "a file with no entries is refused");
-pane = el("div");
-check(changelog("## 1.2.3\n\nA release with no date.\n", "1.0.3", el, pane) === true,
+check(findRelease("## 1.2.3\n\n- No date.\n", "1.2.3") !== null,
       "a heading without a date still parses");
-check(walk(pane.kids[0].kids[0], [])[0] === "1.2.3", "and keeps its version");
-pane = el("div");
-changelog("## 1.2.3 - 2026-01-01\n\nHyphen, not an em dash.\n", "x", el, pane);
-check(walk(pane.kids[0].kids[0], [])[1] === "2026-01-01",
+check(findRelease("## 1.2.3 - 2026-01-01\n\n- Hyphen.\n", "1.2.3").date === "2026-01-01",
       "a hyphen separator parses too");
+var prose = findRelease("## 1.2.3 \u2014 2026-01-01\n\nA paragraph, not a bullet.\n", "1.2.3");
+check(prose && prose.items.length === 1 && !prose.items[0].bullet,
+      "prose renders as prose rather than being dropped");
+check(findRelease("## 1.2.3 \u2014 2026-01-01\n\n", "1.2.3") === null,
+      "an entry with no content is null");
 
 console.log(fails ? "\n" + fails + " FAILED" : "\nall passed");
 process.exit(fails ? 1 : 0);

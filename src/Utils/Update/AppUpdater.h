@@ -103,6 +103,26 @@ namespace AppUpdater {
     // network, so it belongs on a worker thread.
     PullResult PullSource();
 
+    // Hand the rest of the update to a detached helper: close Steam, rebuild,
+    // reinstall, start Steam again. Returns false only when it could not be
+    // launched -- after that this process is going to be killed by the very
+    // thing it started, so there is nothing left to report and the helper
+    // writes its outcome to <state>/update-status instead.
+    //
+    // Call only after PullSource() succeeded. It does not check.
+    bool LaunchAutoUpdate(const std::string& stateDir);
+
+    struct LastUpdate {
+        std::string state;    // "ok", "failed", "running", or "" if never run
+        std::string when;     // local time the helper finished
+        std::string message;  // one sentence, written for the user
+    };
+
+    // What the previous helper run did, read from <state>/update-status. The
+    // report has to survive a Steam restart because the process that asked for
+    // the update does not.
+    LastUpdate ReadLastUpdate(const std::string& stateDir);
+
 #endif // __linux__
 
 } // namespace AppUpdater

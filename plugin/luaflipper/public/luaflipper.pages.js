@@ -3624,91 +3624,97 @@
    * happened yet.
    */
   /**
-   * The changelog, as the update page shows it.
+   * One release, as the update page shows it.
    *
-   * Not a markdown renderer. CHANGELOG.md is written to one shape -- a
-   * `## <version> - <date>` heading per release, prose beneath -- and that is
-   * all this reads, because a general renderer would be several hundred lines
-   * to display a document this file's own header promises will stay simple.
-   * Anything unexpected renders as the paragraph it is.
+   * One, not the history: this sits under a check that has just said whether
+   * you are current, and the only entry that answers what to do next is either
+   * the version you are on or the version you would move to. The rest is
+   * archaeology, and CHANGELOG.md on GitHub is where that belongs.
    *
-   * `mine` is the running version. The entry matching it is marked, and
-   * everything above it is what an update would bring, which is the question
-   * someone opens this page with.
+   * Not a markdown renderer either. The file is written to one shape -- a
+   * `## <version> - <date>` heading per release, `-` bullets beneath it -- and
+   * that is all this reads, because a general renderer would be several hundred
+   * lines to display a document the file's own header promises to keep simple.
    */
-  function changelog(md, mine, el, pane) {
+  function findRelease(md, version) {
     var lines = text(md).split("\n");
-    var entries = [], cur = null, para = [];
+    var want = text(version), cur = null, para = [];
 
-    function flush() {
-      if (cur && para.length) cur.paras.push(para.join(" "));
+    function flush(e) {
+      if (e && para.length) e.items.push({ bullet: false, text: para.join(" ") });
       para = [];
     }
-    lines.forEach(function (raw) {
-      var line = raw.replace(/\s+$/, "");
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/\s+$/, "");
       if (line.indexOf("## ") === 0) {
-        flush();
+        flush(cur);
+        if (cur) break;                      // the wanted entry just ended
         // The dash between version and date is an em dash in the file; split on
-        // either so a hand-edited entry with a hyphen still parses.
+        // either, so a hand-edited entry with a hyphen still parses.
         var head = line.substring(3).split(/\s+[-\u2014]\s+/);
-        cur = { version: head[0].trim(), date: (head[1] || "").trim(), paras: [] };
-        entries.push(cur);
-        return;
+        if (head[0].trim() === want)
+          cur = { version: head[0].trim(), date: (head[1] || "").trim(), items: [] };
+        continue;
       }
-      if (line.indexOf("# ") === 0) { flush(); cur = null; return; }
-      if (!cur) return;                 // the file's own preamble
-      if (!line.trim()) { flush(); return; }
+      if (!cur) continue;
+      if (line.indexOf("- ") === 0) {
+        flush(cur);
+        cur.items.push({ bullet: true, text: line.substring(2).trim() });
+        continue;
+      }
+      if (!line.trim()) { flush(cur); continue; }
       para.push(line.trim());
+    }
+    flush(cur);
+    return cur && cur.items.length ? cur : null;
+  }
+
+  /**
+   * Draw that release. `note` is the one-word state: what you are running, or
+   * what is waiting for you.
+   */
+  function drawRelease(entry, note, el, pane) {
+    var box = style(el("div"), {
+      padding: "12px 14px", borderRadius: "3px", background: SET.field,
+      marginBottom: "10px"
     });
-    flush();
 
-    if (!entries.length) return false;
-
-    var seenMine = false;
-    entries.forEach(function (e) {
-      var head = style(el("div"), {
-        display: "flex", alignItems: "baseline", gap: "10px",
-        marginBottom: "6px"
-      });
-      head.appendChild(style(el("div", null, e.version), {
-        fontSize: "15px", fontWeight: "bold",
-        color: seenMine ? SET.label : "#ffffff"
+    var head = style(el("div"), {
+      display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "8px"
+    });
+    head.appendChild(style(el("div", null, entry.version), {
+      fontSize: "15px", fontWeight: "bold", color: "#ffffff"
+    }));
+    if (entry.date) {
+      head.appendChild(style(el("div", null, entry.date), {
+        fontSize: "12px", color: SET.desc
       }));
-      if (e.date) {
-        head.appendChild(style(el("div", null, e.date), {
-          fontSize: "12px", color: SET.desc
-        }));
-      }
-      // Three states worth distinguishing: what you would gain by updating,
-      // what you are on, and history. Only the first two get a word.
-      if (e.version === mine) {
-        seenMine = true;
-        head.appendChild(style(el("div", null, "this build"), {
-          fontSize: "11px", fontWeight: "bold", color: "#111318",
-          background: "#a4d007", borderRadius: "2px", padding: "2px 6px"
-        }));
-      } else if (!seenMine) {
-        head.appendChild(style(el("div", null, "newer"), {
-          fontSize: "11px", fontWeight: "bold", color: "#111318",
-          background: LINK_TEXT, borderRadius: "2px", padding: "2px 6px"
-        }));
-      }
+    }
+    if (note) {
+      head.appendChild(style(el("div", null, note), {
+        fontSize: "11px", fontWeight: "bold", color: "#111318",
+        background: note === "available" ? LINK_TEXT : "#a4d007",
+        borderRadius: "2px", padding: "2px 6px"
+      }));
+    }
+    box.appendChild(head);
 
-      var box = style(el("div"), {
-        padding: "12px 14px", borderRadius: "3px", background: SET.field,
-        marginBottom: "10px", opacity: seenMine && e.version !== mine ? "0.7" : "1"
+    entry.items.forEach(function (it) {
+      var row = style(el("div"), {
+        display: "flex", gap: "8px", marginTop: "5px", fontSize: "13px",
+        lineHeight: "18px", color: SET.label, userSelect: "text",
+        webkitUserSelect: "text"
       });
-      box.appendChild(head);
-      e.paras.forEach(function (t, i) {
-        box.appendChild(style(el("div", null, t), {
-          fontSize: "13px", lineHeight: "19px", color: SET.label,
-          marginTop: i ? "8px" : "0", userSelect: "text",
-          webkitUserSelect: "text"
+      if (it.bullet) {
+        row.appendChild(style(el("div", null, "\u2022"), {
+          flex: "0 0 auto", color: SET.desc
         }));
-      });
-      pane.appendChild(box);
+      }
+      row.appendChild(style(el("div", null, it.text), { minWidth: "0" }));
+      box.appendChild(row);
     });
-    return true;
+
+    pane.appendChild(box);
   }
 
   function updatesSection(data, el, pane) {
@@ -3730,6 +3736,45 @@
       style(el("div", null, text(data && data.version) || "unknown"), {
         fontSize: "14px", color: "#ffffff", fontWeight: "bold"
       }));
+
+    // Filled once the file arrives; the check below may then ask for a
+    // different entry, which is why the document is kept rather than the
+    // rendering of it.
+    var markdown = "";
+    var log = null;
+
+    function showRelease(version, note) {
+      if (!log) return;
+      log.innerHTML = "";
+      var entry = markdown ? findRelease(markdown, version) : null;
+      if (entry) drawRelease(entry, note, el, log);
+      else log.appendChild(style(el("div", null,
+        "No changelog entry for " + (text(version) || "this build") + "."), {
+        fontSize: "13px", color: SET.desc
+      }));
+    }
+
+    // What the last helper run did, if there was one. First thing in the
+    // section because someone whose Steam just restarted itself is owed an
+    // answer before they are offered anything else.
+    fetch(API + "update/last").then(json).then(function (u) {
+      if (!u || !u.state || u.state === "running") return;
+      var ok = u.state === "ok";
+      var note = style(el("div"), {
+        padding: "10px 12px", borderRadius: "3px", marginBottom: "14px",
+        background: SET.field, fontSize: "13px", lineHeight: "18px",
+        borderLeft: "3px solid " + (ok ? "#a4d007" : "#e7a94a")
+      });
+      note.appendChild(style(el("div", null, ok ? "Update applied"
+                                                : "Update did not finish"), {
+        fontWeight: "bold", color: "#ffffff", marginBottom: "2px"
+      }));
+      note.appendChild(style(el("div", null,
+        text(u.message) + (text(u.when) ? "  \u00b7  " + text(u.when) : "")), {
+        color: SET.label
+      }));
+      pane.insertBefore(note, pane.firstChild.nextSibling);
+    }).catch(skip);
 
     var latestVal = style(el("div", null, "not checked yet"), {
       fontSize: "13px", color: SET.desc, textAlign: "right"
@@ -3834,17 +3879,39 @@
           "Version " + (text(res.remote_version) || "unknown") +
           " is available. This build is " + (text(res.version) || "unknown") +
           "." + (behindBy ? " " + plural(behindBy, "commit") + " behind." : "")));
-        var apply = dialogBtn(el, behindBy
-          ? "Pull " + plural(behindBy, "commit")
-          : "Pull from " + (branch || "the branch"));
+        // The entry that matters is now the one being offered, not the one
+        // running.
+        showRelease(text(res.remote_version), "available");
+
+        /*
+         * One button for the whole thing.
+         *
+         * Pulling was never the work: the module Steam has loaded is the old
+         * build until the installer replaces it, and the installer cannot run
+         * while Steam is holding that file open. So the update always ended in
+         * a command to copy, a Steam to close by hand and a Steam to start
+         * again -- three manual steps to finish something that had already been
+         * decided.
+         *
+         * A detached helper does them instead. Nothing is reported back after
+         * it starts, because it closes the Steam this page is drawn in; the
+         * outcome is read from disk on the next start, at the top of this
+         * section.
+         */
+        var apply = dialogBtn(el, "Update and restart Steam");
         style(apply, { display: "inline-block", marginTop: "10px" });
         box.appendChild(apply);
+        box.appendChild(style(el("div", null,
+          "Steam closes, the new build compiles, and Steam starts again. It " +
+          "takes a few minutes and needs no input."), {
+          fontSize: "12px", color: SET.desc, marginTop: "8px"
+        }));
         say(box);
 
         apply.addEventListener("click", function () {
           apply.busyLook(true);
-          apply.textContent = "Pulling";
-          fetch(API + "update/apply").then(json).then(function (r2) {
+          apply.textContent = "Updating";
+          fetch(API + "update/apply?auto=1").then(json).then(function (r2) {
             if (!r2 || typeof r2 !== "object") throw new Error("unreadable reply");
             if (r2.error) {
               apply.busyLook(false);
@@ -3852,18 +3919,30 @@
               tell(text(r2.error));
               return;
             }
+            if (r2.automatic) {
+              tell("Updating. Steam is closing now and will start again when " +
+                   "the build is done \u2014 a few minutes. Nothing else is " +
+                   "needed; the result is on this page when it comes back.");
+              return;
+            }
+            // The pull happened and only the helper did not, so the old
+            // instructions are still the way through.
             var line = el("div");
             line.appendChild(el("div", null,
-              "Source updated. The module Steam has loaded is still the old " +
-              "build; the installer cannot run while Steam is up. Close " +
-              "Steam, then build and install it:"));
+              "Source updated, but the update could not be finished " +
+              "automatically" +
+              (text(r2.note) ? " (" + text(r2.note) + ")" : "") +
+              ". Close Steam, then build and install it:"));
             line.appendChild(shellLine(el, text(r2.command) ||
               "./tools/install_linux.sh"));
             say(line);
           }).catch(function (e) {
+            // A closing Steam takes the server with it, and that is the
+            // success path as often as it is a failure.
             apply.busyLook(false);
             apply.textContent = "Try again";
-            tell("Could not reach SteamFlipper: " + why(e));
+            tell("Lost contact with SteamFlipper: " + why(e) +
+                 ". If Steam is closing, the update is running.");
           });
         });
       }).catch(function (e) {
@@ -3873,29 +3952,23 @@
       });
     });
 
-    // Loaded without being asked for, unlike the check above it. It costs one
-    // request to a static file and answers "what would I be updating to",
-    // which is the reason anyone opens this page.
+    // Loaded without being asked for, unlike the check above it: it costs one
+    // request to a static file, and "what changed" is half of why anyone opens
+    // this page.
     pane.appendChild(dialogHead(el, "Changelog"));
-    var log = el("div");
+    log = el("div");
     log.appendChild(el("div", "luaflipper-loading", "Loading\u2026"));
     pane.appendChild(log);
 
     fetch(API + "update/changelog").then(json).then(function (res) {
-      log.innerHTML = "";
-      if (!res || res.error || !changelog(res.markdown,
-                                          text(data && data.version), el, log)) {
-        log.appendChild(style(el("div", null,
-          text(res && res.error) || "The changelog could not be read."), {
-          fontSize: "13px", color: SET.desc
-        }));
-      }
+      if (!res || res.error) throw new Error(text(res && res.error) ||
+                                             "unreadable reply");
+      markdown = text(res.markdown);
+      showRelease(text(data && data.version), "this build");
     }).catch(function (e) {
       log.innerHTML = "";
-      log.appendChild(style(el("div", null,
-        "Could not reach SteamFlipper: " + why(e)), {
-        fontSize: "13px", color: SET.desc
-      }));
+      log.appendChild(style(el("div", null, "The changelog could not be read: " +
+        why(e)), { fontSize: "13px", color: SET.desc }));
     });
   }
 
@@ -4371,13 +4444,15 @@
      * height, and the backdrop was the taller of the two -- an absolutely
      * positioned box still counts towards its scroll container's overflow, so
      * the page scrolled 418px past content that had already ended.
+     *
+     * min-height rather than height, because a long section still has to be
+     * able to scroll. What is being removed is scrolling past the end, not
+     * scrolling.
      */
-    var wrap = style(el("div"), { position: "relative", height: "100%" });
-    wrap.appendChild(style(el("div"), {
-      position: "absolute", top: "-18px", bottom: "-18px", left: "-24px",
-      width: "calc(100% + 48px)", zIndex: "0",
-      pointerEvents: "none", background: PAGE_WASH
-    }));
+    var wrap = style(el("div"), {
+      position: "relative", display: "flex", flexDirection: "column",
+      minHeight: "100%"
+    });
 
     // The dialog itself: rail and pane, filling the page the way the settings
     // window fills its own. The negative margins escape .luaflipper-body's
@@ -4386,13 +4461,22 @@
     // 36px is that padding being added back so the dialog still ends where the
     // frame does.
     var shell = style(el("div"), {
-      position: "relative", zIndex: "1", display: "flex",
-      margin: "-18px -24px", minHeight: "calc(100% + 36px)"
+      position: "relative", display: "flex", flex: "1 1 auto",
+      margin: "-18px -24px"
     });
     wrap.appendChild(shell);
 
+    // Inside the shell, not beside it, so it covers the dialog however tall the
+    // dialog turns out to be. Sized against wrap instead, it stayed one screen
+    // tall and the gradient stopped partway down a long section.
+    shell.appendChild(style(el("div"), {
+      position: "absolute", top: "0", right: "0", bottom: "0", left: "0",
+      zIndex: "0", pointerEvents: "none", background: PAGE_WASH
+    }));
+
     var rail = style(el("div"), {
-      flex: "0 0 198px", background: SET.rail, padding: "24px 0 12px"
+      position: "relative", zIndex: "1", flex: "0 0 198px",
+      background: SET.rail, padding: "24px 0 12px"
     });
     shell.appendChild(rail);
 
@@ -4402,8 +4486,8 @@
     }));
 
     var pane = style(el("div"), {
-      flex: "1 1 auto", minWidth: "0", padding: "18px 24px 32px",
-      maxWidth: "760px"
+      position: "relative", zIndex: "1", flex: "1 1 auto", minWidth: "0",
+      padding: "18px 24px 32px", maxWidth: "760px"
     });
     shell.appendChild(pane);
 

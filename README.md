@@ -78,7 +78,7 @@ After installing, Steam has one more tab next to your account name. Hover it for
 | **Unlocker** | Steam's real store, opened as this tab. Prices render as a 100% discount and **Add to Cart** installs a manifest instead of adding to the cart. Leave the tab and the store is exactly as Valve shipped it |
 | **Manage** | Your manifests as a library grid. Hover a game for its key counts and to update or remove it. A removal is undoable until the next Steam start, and deleted then |
 | **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions, downloads the archive, and offers to extract it over the game |
-| **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status |
+| **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status. **Updates** shows what a new version changes and applies it in one click |
 
 The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab — a navigation, a crashed script, closing it — puts the real store back within seconds. The Store tab is never touched.
 
@@ -166,6 +166,16 @@ LD_PRELOAD=/usr/lib/millennium/libmillennium_x86.so steam
 That `LD_PRELOAD` is not optional and cannot be folded into SteamFlipper. Millennium hooks `main()` and rewrites `LD_PRELOAD` for the `steamwebhelper` child, so it has to be mapped by the dynamic loader **before** Steam initialises. Loading it any later, including from SteamFlipper's proxy, stops `steamwebhelper` from starting at all. If you want it on every launch, put that line in a desktop entry's `Exec=` or a shell alias.
 
 The installer also fixes the reason Millennium's **config page and frontend extensions** silently go missing. Its own installer symlinks `ubuntu12_64/libXtst.so.6` into `/usr/lib/millennium`, a host path the sniper runtime hosting `steamwebhelper` cannot resolve, so the loader falls through to the system library and the whole 64-bit half never loads. Copying real files instead fixes it.
+
+---
+
+### Updating SteamFlipper
+
+**Config → Updates** compares this build against the `VERSION` file on the branch it was built from and shows that release's changelog. If there is a newer one, **Update and restart Steam** does the whole thing: it pulls, closes Steam, builds, installs and starts Steam again.
+
+It has to be that way round rather than done in place. The installer replaces the module that is running the button, so Steam must be gone before it can, which means a detached helper carries it out and there is nothing left to report into. The outcome is written to `<Steam>/steamflipper/update-status` and shown at the top of the same page when Steam comes back, with the full build log next to it in `update.log`.
+
+Nothing is forced: a build that fails leaves the previous module installed and starts Steam again anyway. Point `[update] repo` at your checkout for any of it to work.
 
 ---
 

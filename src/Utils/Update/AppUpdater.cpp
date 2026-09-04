@@ -369,6 +369,67 @@ std::string SelfPath()
     return {};
 }
 
+bool LaunchAutoUpdate(const std::string& stateDir)
+{
+    const std::string repo = Config::GetUpdateRepo();
+    if (repo.empty()) {
+        LOG_WARN("AppUpdater: no repo configured, cannot auto-update");
+        return false;
+    }
+
+    const std::filesystem::path helper =
+        std::filesystem::path(repo) / "tools" / "auto_update.sh";
+    std::error_code ec;
+    if (!std::filesystem::exists(helper, ec)) {
+        LOG_WARN("AppUpdater: {} is missing", helper.string());
+        return false;
+    }
+
+    const std::filesystem::path steam =
+        SFPlatform::DynamicLibrary::GetMainExecutablePath();
+    if (steam.empty()) {
+        LOG_WARN("AppUpdater: steam binary path unknown; cannot auto-update");
+        return false;
+    }
+
+    /*
+     * Scrubbed, for the same reason PatternLoader scrubs.
+     *
+     * A child of Steam inherits the runtime's LD_PRELOAD and LD_LIBRARY_PATH,
+     * and this one runs a compiler, git and the installer -- host tools that
+     * load host libraries. Steam keeps the pre-runtime values under SYSTEM_*
+     * for exactly this case, so they are preferred over a guess.
+     */
+    const char* sysPath = std::getenv("SYSTEM_PATH");
+    std::string path = (sysPath && *sysPath) ? sysPath
+                                             : "/usr/local/bin:/usr/bin:/bin";
+    if (path.find('\'') != std::string::npos)
+        path = "/usr/local/bin:/usr/bin:/bin";
+
+    const std::string cmd =
+        "env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT PATH='" + path + "' " +
+        ShellQuote(helper.string()) + " " + ShellQuote(repo) + " " +
+        ShellQuote(stateDir) + " " + ShellQuote(steam.string());
+
+    if (!SFPlatform::Process::LaunchDetachedHidden(cmd)) {
+        LOG_WARN("AppUpdater: auto-update helper failed to launch");
+        return false;
+    }
+    LOG_INFO("AppUpdater: auto-update helper launched, Steam will close");
+    return true;
+}
+
+LastUpdate ReadLastUpdate(const std::string& stateDir)
+{
+    LastUpdate u;
+    std::ifstream f(std::filesystem::path(stateDir) / "update-status");
+    if (!f) return u;
+    std::getline(f, u.state);
+    std::getline(f, u.when);
+    std::getline(f, u.message);
+    return u;
+}
+
 std::string Changelog()
 {
     const std::string baked = STEAMFLIPPER_GIT_BRANCH;
