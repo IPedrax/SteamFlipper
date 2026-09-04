@@ -7,6 +7,16 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.4 — 2026-09-03
+
+- Updating is one click: **Config → Updates → Update and restart Steam** pulls, closes Steam, builds, installs and starts it again
+- No command to copy and no manual restart; it needs no input and takes a few minutes
+- The result is waiting on that page when Steam comes back, with the build log in `update.log`
+- A failed build leaves the working module installed and starts Steam anyway
+- Every release now has a changelog, on GitHub and in the client
+- Config → Updates shows the entry for your build, or for the update it just found
+- The Config backdrop covers a long section instead of stopping one screen down
+
 ## 1.0.3 — 2026-09-03
 
 - Fix downloads work. Sign in with Discord in your browser; nothing to paste, and the old `[fixes] token` field is gone

@@ -71,9 +71,11 @@ versions.forEach(function (v) {
 console.log("Only that release");
 var e = findRelease(md, versions[1]);
 check(e.items.join(" ").indexOf(versions[0]) < 0, "the entry above does not bleed in");
-check(findRelease(md, versions[0]).items.length !==
-      findRelease(md, versions[1]).items.length ||
-      versions.length < 2, "entries are distinct");
+function bullets(v) {
+  return findRelease(md, v).items.map(function (i) { return i.text; }).join("|");
+}
+check(bullets(versions[0]) !== bullets(versions[1]),
+      "two entries do not return the same content");
 check(findRelease(md, "9.9.9") === null, "a version not in the file is null");
 check(findRelease("", "1.0.0") === null, "an empty file is null");
 check(findRelease(md, versions[0]).items.join(" ").indexOf("load-bearing") < 0,
