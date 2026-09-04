@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.1 — 2026-09-03
+
+- The Workshop dialog is built to Steam's own dialog structure, so it looks like one of the client's rather than a box that resembles one
+- Steam's client buttons, a close X, and the gradient top bar, all from classes a theme already targets
+- Download only is the primary action, since it is the one that changes nothing outside this machine
+
 ## 1.1.0 — 2026-09-03
 
 - New **Workshop** tab: Steam's real workshop, opened as a LUAFlipper tab, the way Unlocker opens the store

@@ -220,78 +220,93 @@
   /**
    * The question, in Steam's own dialog.
    *
-   * Built from the community pages' real classes -- newmodal, newmodal_header,
-   * newmodal_content, and the btn_*_innerfade buttons -- rather than styled by
-   * hand. That is the whole point: a skin or plugin that restyles Steam's
-   * dialogs restyles this one too, and it already looks right on whatever theme
-   * is in use. Only layout the classes do not carry is set inline.
+   * The markup is Steam's, copied from what ShowConfirmDialog builds on this
+   * page rather than approximated: a <dialog class="newmodal"> holding a top
+   * bar, a header border wrapping the close box and title_text, and a content
+   * border wrapping the content and its newmodal_buttons row. Getting that
+   * nesting right is what makes it a Steam dialog instead of a box that looks
+   * like one -- several of those classes are styled only in context, and a
+   * theme restyling Steam's dialogs targets exactly this shape.
+   *
+   * Buttons are the btn_*_steamui family the client's own dialogs use, not the
+   * older btn_*_white_innerfade web buttons.
    *
    * `then` is called with true to subscribe as well, false to only download,
    * and not at all if the user backs out.
    */
   function ask(then) {
+    function div(cls, parent) {
+      var d = document.createElement("div");
+      if (cls) d.className = cls;
+      if (parent) parent.appendChild(d);
+      return d;
+    }
+
+    // Steam's own JS positions its dialogs; ours only has to be centred, and
+    // the backdrop is separate so a click outside can dismiss it.
     var back = document.createElement("div");
-    back.style.cssText = "position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.6);" +
-                         "display:flex;align-items:center;justify-content:center";
+    back.style.cssText = "position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.6)";
 
-    var modal = document.createElement("div");
+    var modal = document.createElement("dialog");
     modal.className = "newmodal";
-    modal.style.cssText = "position:relative;max-width:460px;width:calc(100% - 40px)";
+    modal.setAttribute("open", "");
+    modal.style.cssText = "position:fixed;z-index:1000;left:50%;top:50%;" +
+                          "transform:translate(-50%,-50%);outline:none;margin:0;" +
+                          "max-width:min(520px, calc(100% - 40px))";
 
-    var head = document.createElement("div");
-    head.className = "newmodal_header_border";
-    var title = document.createElement("div");
-    title.className = "newmodal_header";
+    div("modal_top_bar", modal);
+
+    var headBorder = div("newmodal_header_border", modal);
+    var head = div("newmodal_header", headBorder);
+    var shut = div("newmodal_close", head);
+    var title = div("title_text", head);
     title.textContent = "Download with LUAFlipper";
-    head.appendChild(title);
 
-    var body = document.createElement("div");
-    body.className = "newmodal_content";
+    var contentBorder = div("newmodal_content_border", modal);
+    var content = div("newmodal_content", contentBorder);
 
-    var says = document.createElement("div");
-    says.style.cssText = "margin-bottom:16px;line-height:1.5";
+    var says = div("", content);
     says.textContent =
       "Steam downloads the files either way. Subscribing also adds this item " +
       "to your account, keeps it updated, and shows it on your public profile.";
-    body.appendChild(says);
 
-    var row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap";
-
-    function button(cls, words, fn) {
-      var a = document.createElement("a");
-      a.className = cls;
-      a.href = "javascript:void(0)";
-      var s = document.createElement("span");
-      s.textContent = words;
-      a.appendChild(s);
-      a.addEventListener("click", function (e) { e.preventDefault(); close(); fn(); });
-      row.appendChild(a);
-      return a;
-    }
+    // newmodal_buttons carries no styling of its own outside Steam's own panel
+    // layout, so the row is laid out here; the class stays for themes that do
+    // target it.
+    var row = div("newmodal_buttons", content);
+    row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:20px;" +
+                        "justify-content:flex-end";
 
     function close() {
       if (back.parentNode) back.parentNode.removeChild(back);
+      if (modal.parentNode) modal.parentNode.removeChild(modal);
       document.removeEventListener("keydown", onKey, true);
     }
-    function onKey(e) { if (e.key === "Escape") close(); }
+    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); close(); } }
 
-    button("btn_green_white_innerfade btn_border_2px btn_medium",
-           "Subscribe and download", function () { then(true); });
-    button("btn_darkblue_white_innerfade btn_border_2px btn_medium",
-           "Download only", function () { then(false); });
-    button("btn_grey_white_innerfade btn_border_2px btn_medium",
-           "Cancel", function () {});
+    function button(cls, words, fn) {
+      var b = div(cls + " btn_medium", row);
+      var s = document.createElement("span");
+      s.textContent = words;
+      b.appendChild(s);
+      b.style.cursor = "pointer";
+      b.addEventListener("click", function () { close(); fn(); });
+      return b;
+    }
 
-    body.appendChild(row);
-    modal.appendChild(head);
-    modal.appendChild(body);
-    back.appendChild(modal);
-    // A click on the backdrop is a way out, but only the backdrop: the same
-    // click landing inside the dialog must not dismiss it.
-    back.addEventListener("click", function (e) { if (e.target === back) close(); });
+    // Green is the primary action in Steam's dialogs, and the primary action
+    // here is the one that changes nothing outside this machine.
+    button("btn_green_steamui", "Download only", function () { then(false); });
+    button("btn_blue_steamui", "Subscribe and download", function () { then(true); });
+    button("btn_grey_steamui", "Cancel", function () {});
+
+    shut.style.cursor = "pointer";
+    shut.addEventListener("click", close);
+    back.addEventListener("click", close);
     document.addEventListener("keydown", onKey, true);
+
     document.body.appendChild(back);
+    document.body.appendChild(modal);
   }
 
   function apply() {
