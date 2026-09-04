@@ -369,6 +369,23 @@ std::string SelfPath()
     return {};
 }
 
+std::string Changelog()
+{
+    const std::string baked = STEAMFLIPPER_GIT_BRANCH;
+    const std::string branch = (baked.empty() || baked == "unknown") ? "main" : baked;
+    const std::string url = std::string(kRawBase) + branch + "/CHANGELOG.md";
+    // 256 KiB: the file is prose and grows one entry per release, so this is a
+    // ceiling that will not be met rather than a size to plan for.
+    const auto r = SFPlatform::Http::Execute(L"GET", url.c_str(), nullptr, 0,
+                                             nullptr, 5000, 5000, 10000, 10000,
+                                             256u * 1024u);
+    if (!r.ok || r.status != 200) {
+        LOG_WARN("AppUpdater: no CHANGELOG.md on {} (HTTP {})", branch, r.status);
+        return {};
+    }
+    return r.body;
+}
+
 SourceCheck CheckSource()
 {
     SourceCheck c;

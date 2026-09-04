@@ -2356,6 +2356,13 @@ namespace {
             return JsonUpdate(appId);
         }
         if (path == "/api/update/check") return JsonSourceCheck();
+        if (path == "/api/update/changelog") {
+            const std::string md = AppUpdater::Changelog();
+            if (md.empty())
+                return "{\"error\":\"The changelog could not be read from "
+                       "GitHub.\"}";
+            return "{\"markdown\":\"" + JsonEscape(md) + "\"}";
+        }
         if (path == "/api/update/apply") return JsonSourceApply();
         if (path == "/api/assets") {
             const std::string appId = QueryParam(fullPath, "appid");

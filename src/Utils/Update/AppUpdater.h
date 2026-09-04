@@ -82,6 +82,12 @@ namespace AppUpdater {
     // is reported through `reason` rather than treated as out of date.
     SourceCheck CheckSource();
 
+    // CHANGELOG.md as published on the tracked branch, or "" when it could not
+    // be read. Deliberately the branch's copy and not a local one: the entries
+    // worth reading are the ones describing versions this build does not have
+    // yet, and a checkout that has them is a checkout that is already updated.
+    std::string Changelog();
+
     struct PullResult {
         bool ok = false;
         std::string sha;      // HEAD of the checkout after the attempt

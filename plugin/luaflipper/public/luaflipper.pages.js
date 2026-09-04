@@ -3623,6 +3623,94 @@
    * state hands over a command instead of claiming an update that has not
    * happened yet.
    */
+  /**
+   * The changelog, as the update page shows it.
+   *
+   * Not a markdown renderer. CHANGELOG.md is written to one shape -- a
+   * `## <version> - <date>` heading per release, prose beneath -- and that is
+   * all this reads, because a general renderer would be several hundred lines
+   * to display a document this file's own header promises will stay simple.
+   * Anything unexpected renders as the paragraph it is.
+   *
+   * `mine` is the running version. The entry matching it is marked, and
+   * everything above it is what an update would bring, which is the question
+   * someone opens this page with.
+   */
+  function changelog(md, mine, el, pane) {
+    var lines = text(md).split("\n");
+    var entries = [], cur = null, para = [];
+
+    function flush() {
+      if (cur && para.length) cur.paras.push(para.join(" "));
+      para = [];
+    }
+    lines.forEach(function (raw) {
+      var line = raw.replace(/\s+$/, "");
+      if (line.indexOf("## ") === 0) {
+        flush();
+        // The dash between version and date is an em dash in the file; split on
+        // either so a hand-edited entry with a hyphen still parses.
+        var head = line.substring(3).split(/\s+[-\u2014]\s+/);
+        cur = { version: head[0].trim(), date: (head[1] || "").trim(), paras: [] };
+        entries.push(cur);
+        return;
+      }
+      if (line.indexOf("# ") === 0) { flush(); cur = null; return; }
+      if (!cur) return;                 // the file's own preamble
+      if (!line.trim()) { flush(); return; }
+      para.push(line.trim());
+    });
+    flush();
+
+    if (!entries.length) return false;
+
+    var seenMine = false;
+    entries.forEach(function (e) {
+      var head = style(el("div"), {
+        display: "flex", alignItems: "baseline", gap: "10px",
+        marginBottom: "6px"
+      });
+      head.appendChild(style(el("div", null, e.version), {
+        fontSize: "15px", fontWeight: "bold",
+        color: seenMine ? SET.label : "#ffffff"
+      }));
+      if (e.date) {
+        head.appendChild(style(el("div", null, e.date), {
+          fontSize: "12px", color: SET.desc
+        }));
+      }
+      // Three states worth distinguishing: what you would gain by updating,
+      // what you are on, and history. Only the first two get a word.
+      if (e.version === mine) {
+        seenMine = true;
+        head.appendChild(style(el("div", null, "this build"), {
+          fontSize: "11px", fontWeight: "bold", color: "#111318",
+          background: "#a4d007", borderRadius: "2px", padding: "2px 6px"
+        }));
+      } else if (!seenMine) {
+        head.appendChild(style(el("div", null, "newer"), {
+          fontSize: "11px", fontWeight: "bold", color: "#111318",
+          background: LINK_TEXT, borderRadius: "2px", padding: "2px 6px"
+        }));
+      }
+
+      var box = style(el("div"), {
+        padding: "12px 14px", borderRadius: "3px", background: SET.field,
+        marginBottom: "10px", opacity: seenMine && e.version !== mine ? "0.7" : "1"
+      });
+      box.appendChild(head);
+      e.paras.forEach(function (t, i) {
+        box.appendChild(style(el("div", null, t), {
+          fontSize: "13px", lineHeight: "19px", color: SET.label,
+          marginTop: i ? "8px" : "0", userSelect: "text",
+          webkitUserSelect: "text"
+        }));
+      });
+      pane.appendChild(box);
+    });
+    return true;
+  }
+
   function updatesSection(data, el, pane) {
     function json(r) { return r.json(); }
 
@@ -3783,6 +3871,31 @@
         latestVal.textContent = "unknown";
         tell("Could not reach SteamFlipper: " + why(e));
       });
+    });
+
+    // Loaded without being asked for, unlike the check above it. It costs one
+    // request to a static file and answers "what would I be updating to",
+    // which is the reason anyone opens this page.
+    pane.appendChild(dialogHead(el, "Changelog"));
+    var log = el("div");
+    log.appendChild(el("div", "luaflipper-loading", "Loading\u2026"));
+    pane.appendChild(log);
+
+    fetch(API + "update/changelog").then(json).then(function (res) {
+      log.innerHTML = "";
+      if (!res || res.error || !changelog(res.markdown,
+                                          text(data && data.version), el, log)) {
+        log.appendChild(style(el("div", null,
+          text(res && res.error) || "The changelog could not be read."), {
+          fontSize: "13px", color: SET.desc
+        }));
+      }
+    }).catch(function (e) {
+      log.innerHTML = "";
+      log.appendChild(style(el("div", null,
+        "Could not reach SteamFlipper: " + why(e)), {
+        fontSize: "13px", color: SET.desc
+      }));
     });
   }
 
