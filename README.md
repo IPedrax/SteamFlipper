@@ -18,6 +18,7 @@ Built for the **Linux Steam client** (Arch, Debian/Ubuntu, SteamOS, Fedora).
 | **Depot decryption** | Pushes the keys from your manifests into `config.vdf` so downloaded content actually decrypts |
 | **A tab inside Steam** | Find and add manifests, manage what you have, browse fixes and change settings without leaving the client. No Millennium, no separate app |
 | **Cloud saves** | Manifest-added apps get no Steam Cloud, because the account does not own them. SteamFlipper answers those requests itself, out of a folder on this machine |
+| **Workshop downloads** | Steam's own workshop, with Subscribe rebound to ask: download the item, or subscribe as well. Done by the signed-in client, so no SteamCMD and no third-party mirror |
 | **Self-calibrating** | Steam updates change every hook address. The module notices and re-derives them itself instead of going quiet |
 | **Live manifest reload** | Drop a `.lua` in while Steam is running and it gets picked up immediately |
 | **No `LD_PRELOAD`** | Loads through a `libXtst.so.6` proxy that only the Steam client resolves, so nothing is mapped into your games |
@@ -37,6 +38,8 @@ steam -shutdown
 ```
 
 Then launch Steam the way you always do. Everything lands under `$HOME`, with no root, nothing system-wide, and no `PATH` changes.
+
+New here? [WALKTHROUGH.md](WALKTHROUGH.md) is the same install broken into steps, followed by adding your first manifest.
 
 ### <img src="assets/icons/check.svg" width="17" align="absmiddle" alt="" /> Requirements
 
@@ -76,6 +79,7 @@ After installing, Steam has one more tab next to your account name. Hover it for
 | Page | What it is |
 |---|---|
 | **Unlocker** | Steam's real store, opened as this tab. Prices render as a 100% discount and **Add to Cart** installs a manifest instead of adding to the cart. Leave the tab and the store is exactly as Valve shipped it |
+| **Workshop** | Steam's real workshop, opened as this tab. **Subscribe** and the green quick-add on any listing ask whether to download the item or subscribe as well, and the download is done by the client itself |
 | **Manage** | Your manifests as a library grid. Hover a game for its key counts and to update or remove it. A removal is undoable until the next Steam start, and deleted then |
 | **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions, downloads the archive, and offers to extract it over the game |
 | **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status. **Updates** shows what a new version changes and applies it in one click |
@@ -93,6 +97,18 @@ Apps added by a manifest are not on your account, so Valve answers their cloud u
 Switch it on under **Config → Cloud saves**. It takes effect on the next Steam start.
 
 > Those saves live only on this machine. Nothing copies them anywhere else, so point a backup or sync client at that folder if they matter.
+
+### Workshop downloads
+
+Open **LUAFLIPPER → Workshop** and you get Steam's real workshop, the same way the Unlocker tab gives you the real store. **Subscribe** on an item page, and the green **+** on any listing row, are rebound: they ask first, offering the download on its own or a subscription with it, and do neither until told.
+
+The download is done by the signed-in client — the same call the library's own mod manager makes. That matters, because every standalone workshop downloader is working around *not* being Steam. They drive SteamCMD with an anonymous login, which only reaches the games in Steam's dedicated-server sub, or they ask the public API for a direct file URL, which only legacy single-file items have: across a sample of sixty-four popular items, ten of them. Asking the client instead needs no SteamCMD and no mirror, and works for the depot-backed items neither route can fetch.
+
+Downloading is not subscribing. The files land in `steamapps/workshop/content/<appid>/<id>/` in the library the game lives in, and nothing is written to your account. Subscribing is the other button, and it is offered rather than assumed, because a subscription shows on your public profile.
+
+As with the store, the hooks are a lease held only while the Workshop tab is open. The ordinary Community tab is never touched.
+
+> Items for a game you have no manifest for may not start downloading at all. Add the manifest first.
 
 ### Downloading fixes
 
