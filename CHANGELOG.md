@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.6 — 2026-09-03
+
+- Fixes a crash that could take the whole Steam client down from the Fixes or Sources page
+- The lua.tools token refresh built a string from two different temporaries, then read off the end of the heap looking for one's end in the other
+- Present since 1.0.3, and intermittent: it only faulted when the allocator did not hand back the same address twice
+
 ## 1.0.5 — 2026-09-03
 
 - Fixes the 1.0.4 automatic update leaving the client with every page loading forever

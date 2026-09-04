@@ -1367,11 +1367,18 @@ namespace {
             return {};
         }
 
+        // Named, because the two halves have to be iterators into the SAME
+        // string. Written inline as std::string(kSupabaseAnon).begin() and
+        // std::string(kSupabaseAnon).end(), those are two separate temporaries:
+        // the range walks from one buffer looking for the other's end, never
+        // finds it, and runs off the heap. It only faults when the allocator
+        // does not hand back the same address twice, which is why this crashed
+        // the client one day and not the day it was written.
+        const std::string anon(kSupabaseAnon);
         auto r = PostJson(std::string(kSupabase) + "/auth/v1/token?grant_type=refresh_token",
                           "{\"refresh_token\":\"" + JsonEscape(refresh) + "\"}",
                           std::wstring(L"apikey: ") +
-                          std::wstring(std::string(kSupabaseAnon).begin(),
-                                       std::string(kSupabaseAnon).end()) + L"\r\n");
+                          std::wstring(anon.begin(), anon.end()) + L"\r\n");
         if (!r.ok || r.status != 200) {
             err = "the saved session was refused; sign in again";
             return {};
