@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.2 — 2026-09-03
+
+- The green quick-add button on workshop listings is hooked too, not just Subscribe on an item's page
+- One click on any row in the hub, browse or a collection opens the same dialog
+- Matched by what makes the button green rather than by class name, since Steam's newer UI rebuilds those names on every update
+
 ## 1.1.1 — 2026-09-03
 
 - The Workshop dialog is built to Steam's own dialog structure, so it looks like one of the client's rather than a box that resembles one

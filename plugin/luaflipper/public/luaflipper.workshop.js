@@ -109,13 +109,14 @@
    * classes: relabelling Valve's button is the point, and replacing it would
    * lose the page's styling.
    */
-  function hookSubscribe(btn) {
+  function hookSubscribe(btn, id) {
     if (!btn || btn.getAttribute("data-lf-hooked")) return;
-    var id = fileId();
     if (!id) return;
 
     var label = btn.querySelector("span") || btn;
     var original = label.textContent;
+    var hadText = !!(original && original.trim());
+    var originalTitle = btn.getAttribute("title") || "";
     btn.setAttribute("data-lf-hooked", "1");
     btn.classList.add(MARK);
 
@@ -137,13 +138,20 @@
 
     function run(alsoSubscribe) {
       var started = new Date().getTime();
+      function show(words) {
+        if (hadText) label.textContent = words; else btn.title = words;
+      }
       var tick = setInterval(function () {
-        label.textContent = "Downloading " +
-          Math.round((new Date().getTime() - started) / 1000) + "s";
+        show("Downloading " + Math.round((new Date().getTime() - started) / 1000) + "s");
       }, 1000);
-      label.textContent = "Downloading 0s";
+      show("Downloading 0s");
 
-      function done(s, why) { clearInterval(tick); label.textContent = s; btn.title = why || ""; }
+      function done(s, why) {
+        clearInterval(tick);
+        show(s);
+        if (hadText) btn.title = why || "";
+        else if (why) btn.title = s + " \u2014 " + why;
+      }
       function retry(s, why) { done(s, why); busy = false; }
 
       function start(app) {
@@ -182,7 +190,7 @@
       // either way.
       function go(app) {
         if (!alsoSubscribe) { start(app); return; }
-        label.textContent = "Subscribing";
+        show("Subscribing");
         call("/api/workshop/subscribe?appid=" + encodeURIComponent(app) +
              "&id=" + encodeURIComponent(id) + "&set=1", function (body) {
           var res = parse(body);
@@ -205,13 +213,17 @@
     }
 
     btn.addEventListener("click", onClick, true);
-    label.textContent = "Download with LUAFlipper";
+    // The item page's button says what it does; the listing's quick-add is an
+    // icon with no words, so it gets a tooltip instead of having text forced
+    // into it.
+    if (hadText) label.textContent = "Download with LUAFlipper";
+    else btn.title = "Download with LUAFlipper";
     undo.push(function () {
       btn.removeEventListener("click", onClick, true);
       btn.removeAttribute("data-lf-hooked");
       btn.classList.remove(MARK);
-      label.textContent = original;
-      btn.title = "";
+      if (hadText) label.textContent = original;
+      btn.title = originalTitle;
     });
   }
 
@@ -309,15 +321,61 @@
     document.body.appendChild(modal);
   }
 
+  /**
+   * The item a listing control belongs to.
+   *
+   * Walks out from the button to the smallest ancestor holding exactly one
+   * link to an item page, and reads the id off that. Structural on purpose:
+   * the workshop hub and browse pages are Steam's newer UI, where every class
+   * name is a build hash -- YAnzAmuUUnI- today, something else after the next
+   * client update -- so anything keyed to one would break silently. The
+   * relationship between a row and its own link does not change.
+   */
+  function rowId(btn) {
+    var n = btn;
+    for (var up = 0; up < 8 && n && n.parentNode; up++) {
+      n = n.parentNode;
+      if (!n.querySelectorAll) continue;
+      var links = n.querySelectorAll('a[href*="filedetails/?id="]');
+      if (links.length === 1) {
+        var m = /[?&]id=(\d+)/.exec(links[0].getAttribute("href") || "");
+        if (m) return m[1];
+      }
+      if (links.length > 1) return "";     // walked past the row into the grid
+    }
+    return "";
+  }
+
   function apply() {
     if (!active || !document.body) return;
-    if (!fileId()) return;              // a browse page has nothing to rebind
-    // Steam has used several of these over the years and ships more than one
-    // on a page (the sticky header carries its own copy).
-    var seen = document.querySelectorAll(
-      "#SubscribeItemBtn, .subscribeOption, #SubscribeItemOptionAdd, " +
-      "[onclick*='SubscribeItem'], [id^='SubscribeItem']");
-    for (var i = 0; i < seen.length; i++) hookSubscribe(seen[i]);
+
+    var here = fileId();
+    if (here) {
+      // An item's own page. Steam has used several of these over the years and
+      // ships more than one on a page (the sticky header carries its own copy).
+      var seen = document.querySelectorAll(
+        "#SubscribeItemBtn, .subscribeOption, #SubscribeItemOptionAdd, " +
+        "[onclick*='SubscribeItem'], [id^='SubscribeItem']");
+      for (var i = 0; i < seen.length; i++) hookSubscribe(seen[i], here);
+      return;
+    }
+
+    /*
+     * A listing: the workshop hub, browse, a collection. Each row carries the
+     * green quick-add button, which subscribes in one click without ever
+     * opening the item.
+     *
+     * Matched on data-accent-color, which is what makes it the green one, and
+     * is a semantic attribute rather than one of the hashed class names beside
+     * it. Rows without a resolvable item are left alone, so a green button that
+     * is not a quick-add -- a filter, a paginator -- keeps working as Steam
+     * intended.
+     */
+    var adds = document.querySelectorAll('button[data-accent-color="green"]');
+    for (var j = 0; j < adds.length; j++) {
+      var id = rowId(adds[j]);
+      if (id) hookSubscribe(adds[j], id);
+    }
   }
 
   function revert() {
