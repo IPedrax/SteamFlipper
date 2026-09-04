@@ -77,7 +77,7 @@ After installing, Steam has one more tab next to your account name. Hover it for
 |---|---|
 | **Unlocker** | Steam's real store, opened as this tab. Prices render as a 100% discount and **Add to Cart** installs a manifest instead of adding to the cart. Leave the tab and the store is exactly as Valve shipped it |
 | **Manage** | Your manifests as a library grid. Hover a game for its key counts and to update or remove it. A removal is undoable until the next Steam start, and deleted then |
-| **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions and downloads the archive |
+| **Fixes** | The games you have a manifest for that a published fix exists for, laid out like a library game page. The fix opens with its own instructions, downloads the archive, and offers to extract it over the game |
 | **Config** | Steam's settings dialog, for this module: updates, cloud saves, configuration and status |
 
 The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab — a navigation, a crashed script, closing it — puts the real store back within seconds. The Store tab is never touched.
@@ -96,14 +96,15 @@ Switch it on under **Config → Cloud saves**. It takes effect on the next Steam
 
 ### Downloading fixes
 
-The fix catalog is readable without an account. Downloading a fix is not: that endpoint wants a lua.tools bearer token, which is yours and has its own daily cap. Add it and restart Steam:
+The fix catalog is readable without an account. Downloading one is not — that endpoint wants a lua.tools session, and the cap of 25 downloads a day is per account. **Sign in with Discord** on the Fixes or Sources page opens Discord's normal authorise page in your browser and lands back on the module's own loopback server. It is PKCE throughout, so the code that comes back is worth nothing without a verifier that never leaves the process, and only the rotating refresh token is stored.
 
-```toml
-[fixes]
-token = "..."
-```
+There is nothing to paste. A `[fixes] token` in the config never worked and has been dropped: what that header wants is an access token minted per session, so any value written to a file was stale within the hour.
 
-Fixes are downloaded, never applied. They ship their own instructions — which files go where, what to disable first, what to undo afterwards — and those differ per release, so the archive lands in `<Steam>/steamflipper/fixes/` and applying it stays with whoever read them.
+The same session unlocks three manifest sources — Luie, TwentyTwo Cloud and Skyflare — which are served only through lua.tools' proxy. Ryuu and Sushi stay direct, because routing them through it would spend one of the 25 to fetch bytes that are already free.
+
+The archive lands in `<Steam>/steamflipper/fixes/`. Applying it is a separate button, and only ever does the one step every fix opens with: **Extract to game folder**, into the folder Steam chose — found by walking `libraryfolders.vdf`, so a game on another drive works. Anything it replaces is copied to `.sfbak` first, once, so the DLLs the game shipped survive a second fix.
+
+Everything past extracting stays with whoever read the instructions, because that part differs per release: across a sample of the catalog, 96% of fixes are extract-and-play, and the rest ask for a config edit or an installer run afterwards. If the archive carries a `.cmd`, `.exe` or `.vbs`, the result says so rather than letting *Extracted* read as finished.
 
 ---
 
