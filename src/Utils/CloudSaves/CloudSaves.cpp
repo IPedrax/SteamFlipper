@@ -488,6 +488,8 @@ namespace {
         RespondStatus(fd, "200 OK");
     }
 
+    void StopHttp();
+
     bool StartHttp() {
         g_listenFd = ::socket(AF_INET, SOCK_STREAM, 0);
         if (g_listenFd < 0) return false;
@@ -510,6 +512,12 @@ namespace {
             return false;
         }
         g_port = ntohs(addr.sin_port);
+
+        // See the note in LuaFileWatcher::Start: the static thread's destructor
+        // is registered before this runs, and exit handlers run in reverse, so
+        // registering here is what gets the join in ahead of it.
+        static bool once = (std::atexit([] { StopHttp(); }), true);
+        (void)once;
 
         g_httpRunning.store(true, std::memory_order_release);
         g_httpThread = std::thread([] {

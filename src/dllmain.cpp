@@ -233,6 +233,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, PVOID pvReserved)
         SteamUI::CoreUnhook();
         SteamClient::CoreUnhook();
         CloudRedirectHost::Shutdown();
+        CloudSaves::Shutdown();
     }
 
     return TRUE;
@@ -254,5 +255,10 @@ __attribute__((destructor)) static void OnUnload() {
     SteamUI::CoreUnhook();
     SteamClient::CoreUnhook();
     CloudRedirectHost::Shutdown();
+    // Nothing else called this, so the loopback endpoint stayed up until the
+    // process died. The join that keeps ~thread() from terminating is
+    // registered in CloudSaves itself, because .fini_array runs too late for
+    // it; this is the orderly shutdown, not the safety net.
+    CloudSaves::Shutdown();
 }
 #endif

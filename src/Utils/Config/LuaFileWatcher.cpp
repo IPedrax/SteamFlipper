@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "Hook/Hooks_Package.h"
 #include "Utils/Config/LuaFileWatcher.h"
 #include "Utils/Config/LuaConfig.h"
@@ -212,6 +213,25 @@ void Start(const std::vector<std::string>& directories) {
         LOG_PACKAGE_WARN("Lua watcher already running");
         return;
     }
+
+    /*
+     * Join before the static std::thread is destroyed, not after.
+     *
+     * ~thread() on a joinable thread calls std::terminate, and the destructor
+     * of a namespace-scope thread object is registered at static-init time --
+     * before this function ever runs. Exit handlers run in reverse
+     * registration order, so an atexit registered here runs FIRST, and Stop()
+     * gets to join while the object is still alive.
+     *
+     * The module's own unload hook calls Stop() too, but that lives in
+     * .fini_array, which glibc runs after the __cxa_atexit list has already
+     * destroyed this object. That ordering is why every Steam exit ended in
+     * abort with a core dump: 114 of them on the machine this was found on,
+     * all after Steam had finished its own shutdown, which is why nothing
+     * looked wrong.
+     */
+    static bool once = (std::atexit(Stop), true);
+    (void)once;
 
     g_watchDirs = directories;
     g_watcherThread = std::thread(WatcherThread);

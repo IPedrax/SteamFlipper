@@ -7,6 +7,13 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.0.7 — 2026-09-03
+
+- Steam exits cleanly instead of aborting with a core dump every single time it closes
+- A watcher thread was still joinable when its static destructor ran, and destroying a joinable thread calls `std::terminate`
+- The join is registered at start time now, so it happens before that destructor rather than after
+- Long-standing, and invisible: it fired after Steam had finished its own shutdown, so nothing was lost — but each one uploaded a crash report to Valve
+
 ## 1.0.6 — 2026-09-03
 
 - Fixes a crash that could take the whole Steam client down from the Fixes or Sources page
