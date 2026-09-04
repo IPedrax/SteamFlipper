@@ -43,6 +43,7 @@
   // Manage) because the two answer different questions.
   var PAGES = [
     { page: "unlocker", label: "Unlocker" },
+    { page: "workshop", label: "Workshop" },
     { page: "manage",   label: "Manage" },
     { page: "fixes",    label: "Fixes" },
     { page: "config",   label: "Config" }
@@ -633,11 +634,16 @@
    * not wait on the network, or the store would navigate before the flag lands
    * and the first paint would show real prices.
    */
-  function setUnlockerMode(on, then) {
+  // Which lease each browser-view tab holds. Two, not one: the store must not
+  // grow Subscribe hooks and a community page must not have its prices
+  // rewritten, so a tab only ever arms the surface it is showing.
+  var LEASE = { unlocker: "unlocker/mode", workshop: "workshop/mode" };
+
+  function setMode(page, on, then) {
     var done = false;
     function go() { if (!done) { done = true; if (then) then(); } }
     try {
-      fetch(API + "unlocker/mode?set=" + (on ? "1" : "0"))
+      fetch(API + LEASE[page] + "?set=" + (on ? "1" : "0"))
         .then(go).catch(go);
     } catch (e) { go(); }
     // Never let a stalled request strand the navigation.
@@ -660,14 +666,15 @@
   // watches for the user leaving does not mistake our own click for theirs.
   var selfNav = false;
 
-  function holdUnlockerMode(on) {
+  function holdMode(page, on) {
     if (holdTimer) { clearInterval(holdTimer); holdTimer = null; }
-    if (!on) { setUnlockerMode(false, null); return; }
+    if (!on) { setMode(page, false, null); return; }
     holdTimer = setInterval(function () {
       // Renew only while we are still the open tab and still highlighted; if
-      // Steam moved the highlight elsewhere, the user is on the real store.
-      if (currentPage === "unlocker" && hasHighlight()) setUnlockerMode(true, null);
-      else holdUnlockerMode(false);
+      // Steam moved the highlight elsewhere, the user is on the real store or
+      // the real community and the hooks must come off.
+      if (currentPage === page && hasHighlight()) setMode(page, true, null);
+      else holdMode(page, false);
     }, 2000);
   }
 
@@ -675,8 +682,8 @@
     var p = document.getElementById(PAGE_ID);
     if (p) p.remove();
     restoreStock();
-    // Leaving our tab must put the store back, whether or not it was ours.
-    if (currentPage === "unlocker") holdUnlockerMode(false);
+    // Leaving our tab must put Valve's page back, whether or not it was ours.
+    if (LEASE[currentPage]) holdMode(currentPage, false);
     currentPage = null;
     releaseHighlight();
   }
@@ -697,26 +704,32 @@
     // navigation: reimplementing that routing would mean owning a browser view
     // and a history stack we have no reason to own. The store target's script
     // reads the flag and presents prices as free with Add to Cart rerouted.
-    if (page === "unlocker") {
+    // Two tabs are Steam's own pages rather than pages of ours: Unlocker is the
+    // store, Workshop is the community. Both work the same way -- flip the
+    // shared mode flag, then click the stock nav button so the client does its
+    // normal navigation. Reimplementing that routing would mean owning a
+    // browser view and a history stack we have no reason to own.
+    if (LEASE[page]) {
+      var stock = (page === "unlocker") ? "store" : "community";
       currentPage = page;
-      takeHighlight();          // keep our tab lit, not Store's
-      setUnlockerMode(true, function () {
+      takeHighlight();          // keep our tab lit, not Steam's
+      setMode(page, true, function () {
         var b = document.querySelectorAll(".SuperNavBar .MenuButton");
         selfNav = true;
         try {
           for (var i = 0; i < b.length; i++) {
-            if (b[i].textContent.trim().toLowerCase() === "store") { b[i].click(); break; }
+            if (b[i].textContent.trim().toLowerCase() === stock) { b[i].click(); break; }
           }
         } finally {
           selfNav = false;
         }
-        // Steam moves the highlight to Store as it routes, so take it back once
-        // that has settled.
+        // Steam moves the highlight to the stock tab as it routes, so take it
+        // back once that has settled.
         setTimeout(function () {
-          if (currentPage === "unlocker") takeHighlight();
+          if (currentPage === page) takeHighlight();
         }, 150);
       });
-      holdUnlockerMode(true);
+      holdMode(page, true);
       return;
     }
 

@@ -127,6 +127,21 @@ Result Execute(const wchar_t* method,
     api.easy_setopt(curl, CURLOPT_URL, url);
     api.easy_setopt(curl, CURLOPT_USERAGENT, "SteamFlipper/1.0");
     api.easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    /*
+     * Mandatory here, not a tuning knob.
+     *
+     * With a synchronous resolver libcurl enforces its connect timeout by
+     * arming SIGALRM and siglongjmp-ing out of the blocking DNS lookup. That
+     * jump crosses a thread stack, glibc's __longjmp_chk notices, and the
+     * process aborts -- taking the whole Steam client with it, since every
+     * caller here is a worker thread inside it. Seen exactly once and it looked
+     * like a crash in our own code: the only frames left were libcurl and
+     * __fortify_fail.
+     *
+     * NOSIGNAL gives up only that alarm. Connect and stall timeouts below are
+     * enforced without signals and still apply.
+     */
+    api.easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     api.easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(timeoutConnect));
     // Deliberately NOT CURLOPT_TIMEOUT_MS: that is a deadline on the entire
     // transfer, whereas the caller's timeoutRecv is WinHTTP's per-operation

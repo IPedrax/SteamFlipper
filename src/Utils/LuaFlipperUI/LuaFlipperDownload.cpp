@@ -755,24 +755,31 @@ std::string ReadAll(const fs::path& p) {
 
 } // namespace
 
-std::string GameDir(const std::string& appId, const std::string& steamPath) {
+std::vector<std::string> Libraries(const std::string& steamPath) {
 #if defined(__linux__)
     // The Steam root is a library itself and is not listed as one in every
     // install, so it goes in first rather than being waited for.
-    std::vector<fs::path> roots{ steamPath };
-    {
-        const std::string doc =
-            ReadAll(fs::path(steamPath) / "steamapps" / "libraryfolders.vdf");
-        for (size_t at = 0;;) {
-            const std::string path = VdfValue(doc, "path", at);
-            if (path.empty()) break;
-            if (std::find(roots.begin(), roots.end(), fs::path(path)) == roots.end())
-                roots.push_back(path);
-        }
+    std::vector<std::string> roots{ steamPath };
+    const std::string doc =
+        ReadAll(fs::path(steamPath) / "steamapps" / "libraryfolders.vdf");
+    for (size_t at = 0;;) {
+        const std::string path = VdfValue(doc, "path", at);
+        if (path.empty()) break;
+        if (std::find(roots.begin(), roots.end(), path) == roots.end())
+            roots.push_back(path);
     }
+    return roots;
+#else
+    (void)steamPath;
+    return {};
+#endif
+}
 
+std::string GameDir(const std::string& appId, const std::string& steamPath) {
+#if defined(__linux__)
     std::error_code ec;
-    for (const fs::path& root : roots) {
+    for (const std::string& lib : Libraries(steamPath)) {
+        const fs::path root(lib);
         const fs::path acf =
             root / "steamapps" / ("appmanifest_" + appId + ".acf");
         if (!fs::exists(acf, ec)) continue;

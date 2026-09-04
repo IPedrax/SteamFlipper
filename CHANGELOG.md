@@ -7,6 +7,16 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.0 — 2026-09-03
+
+- New **Workshop** tab: Steam's real workshop, opened as a LUAFlipper tab, the way Unlocker opens the store
+- Subscribe is rebound to ask first — subscribe and download, or download only
+- The dialog is built from Steam's own classes, so a skin or plugin that themes Steam themes it too
+- Downloads are done by the signed-in client itself, so depot-backed items work, not just the legacy ones a direct link can reach
+- No SteamCMD and no third-party mirror
+- Hooks apply only while the Workshop tab is open; the Community tab is never touched
+- Fixes a libcurl crash that could take the whole client down on any HTTP call
+
 ## 1.0.9 — 2026-09-03
 
 - The struck-through price no longer overlaps the -100% badge on a store page

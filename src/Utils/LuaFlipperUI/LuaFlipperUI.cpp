@@ -379,6 +379,23 @@ namespace {
              at = listJson.find(key, at + key.size())) {
             const std::string url = JsonString(listJson, "url", at);
             if (url.find("://store.steampowered.com") == std::string::npos) continue;
+            (void)0;
+            const std::string ws = JsonString(listJson, "webSocketDebuggerUrl", at);
+            if (!ws.empty()) out.push_back(ws);
+        }
+        return out;
+    }
+
+    // The community, where the workshop lives. Separate from StoreTargets
+    // because the two get different scripts: hooking a Subscribe button has no
+    // business running on a store page, and vice versa.
+    std::vector<std::string> CommunityTargets(const std::string& listJson) {
+        std::vector<std::string> out;
+        const std::string key = "\"url\":";
+        for (size_t at = listJson.find(key); at != std::string::npos;
+             at = listJson.find(key, at + key.size())) {
+            const std::string url = JsonString(listJson, "url", at);
+            if (url.find("://steamcommunity.com") == std::string::npos) continue;
             const std::string ws = JsonString(listJson, "webSocketDebuggerUrl", at);
             if (!ws.empty()) out.push_back(ws);
         }
@@ -1102,7 +1119,7 @@ namespace {
      * target would be three more things to notice dying.
      */
     bool EvalInTarget(const std::string& marker, const std::string& expr,
-                      std::string* value = nullptr) {
+                      std::string* value = nullptr, bool awaitPromise = false) {
         const std::string list = HttpGet(kCdpPort, "/json/list");
         const size_t at = list.find(marker);
         if (at == std::string::npos) return false;
@@ -1111,8 +1128,12 @@ namespace {
 
         WebSocket s;
         if (!s.Open(ws)) return false;
+        // awaitPromise for the client's own async APIs: SteamClient.Apps hands
+        // back promises, and without this the reply is the Promise object
+        // rather than what it resolves to.
         s.Post("Runtime.evaluate",
-               "{\"expression\":\"" + JsonEscape(expr) + "\",\"returnByValue\":true}");
+               "{\"expression\":\"" + JsonEscape(expr) + "\",\"returnByValue\":true" +
+               (awaitPromise ? ",\"awaitPromise\":true" : "") + "}");
         // Read the reply when the caller wants the answer rather than just
         // delivery. Getting that distinction wrong is what made the client
         // window think a menu was up when nothing had been drawn.
@@ -1130,8 +1151,9 @@ namespace {
     // The dropdown, in the order the client window draws it. Kept here so the
     // popup script has no opinion about what the menu contains.
     constexpr const char* kMenuItems =
-        "[{page:'unlocker',label:'Unlocker'},{page:'manage',label:'Manage'},"
-        "{page:'fixes',label:'Fixes'},{page:'config',label:'Config'}]";
+        "[{page:'unlocker',label:'Unlocker'},{page:'workshop',label:'Workshop'},"
+        "{page:'manage',label:'Manage'},{page:'fixes',label:'Fixes'},"
+        "{page:'config',label:'Config'}]";
 
     /**
      * Show the dropdown as a real Steam window.
@@ -1868,6 +1890,176 @@ namespace {
         return res;
     }
 
+    /* --------------------------------------------------------- workshop --- */
+
+    // Every library, as paths. A workshop item lands beside the app it belongs
+    // to, which need not be the drive Steam itself is on.
+    std::vector<std::filesystem::path> WorkshopRoots() {
+        std::vector<std::filesystem::path> out;
+        for (const std::string& p : LuaFlipperDownload::Libraries(g_steamPath))
+            out.emplace_back(p);
+        return out;
+    }
+
+
+    /**
+     * The published file id in whatever the user pasted.
+     *
+     * A workshop URL, a collection URL, or the bare number. Everything else is
+     * refused rather than guessed at: the id goes into a Steam API call and an
+     * expression evaluated in the client, so it has to be digits either way.
+     */
+    std::string PublishedFileId(const std::string& in) {
+        const size_t at = in.find("id=");
+        std::string got = (at == std::string::npos) ? in : in.substr(at + 3);
+        std::string digits;
+        for (char c : got) {
+            if (c >= '0' && c <= '9') digits += c;
+            else if (!digits.empty()) break;      // stop at the next parameter
+        }
+        return digits.size() >= 4 && digits.size() <= 20 ? digits : std::string();
+    }
+
+    /**
+     * What a workshop item is, before anything is downloaded.
+     *
+     * Read from Steam's public API, which needs no key and no account: it is
+     * the one part of this that works whether or not the client is even
+     * running. The app id comes back with it, which is the piece the download
+     * needs and the piece a user pasting a mod link does not have.
+     */
+    std::string JsonWorkshopInfo(const std::string& query) {
+        const std::string id = PublishedFileId(query);
+        if (id.empty())
+            return "{\"error\":\"That is not a workshop link or id.\"}";
+
+        // Form-encoded, and POST only: this endpoint answers 405 to a GET.
+        const std::string body = "itemcount=1&publishedfileids%5B0%5D=" + id;
+        const std::wstring headers =
+            std::wstring(L"Content-Type: application/x-www-form-urlencoded\r\n") + kBrowserUA;
+        auto r = SFPlatform::Http::Execute(
+            L"POST", "https://api.steampowered.com/ISteamRemoteStorage/"
+                     "GetPublishedFileDetails/v1/",
+            body.data(), static_cast<uint32_t>(body.size()), headers.c_str(),
+            5000, 5000, 10000, 20000, 256u * 1024u);
+        if (!r.ok || r.status != 200)
+            return "{\"error\":\"Steam did not answer for that item.\"}";
+
+        // result 1 is success; 9 is "no such file", which is what a mistyped id
+        // looks like and is worth saying plainly.
+        if (JsonNumber(r.body, "result") != 1)
+            return "{\"error\":\"No workshop item with id " + JsonEscape(id) + ".\"}";
+
+        const long long app = JsonNumber(r.body, "consumer_app_id");
+        std::string j = "{\"ok\":true,\"id\":\"" + JsonEscape(id) + "\"";
+        j += ",\"appid\":\"" + std::to_string(app > 0 ? app
+                                : JsonNumber(r.body, "creator_app_id")) + "\"";
+        j += ",\"title\":\"" + JsonEscape(JsonString(r.body, "title")) + "\"";
+        j += ",\"preview\":\"" + JsonEscape(JsonString(r.body, "preview_url")) + "\"";
+        // Quoted in the reply -- "file_size":"6079" -- while consumer_app_id
+        // beside it is a bare number. Read as a string first so a plain number
+        // still works if Valve ever makes them consistent.
+        const std::string sz = JsonString(r.body, "file_size");
+        j += ",\"bytes\":" + std::to_string(sz.empty() ? JsonNumber(r.body, "file_size")
+                                                       : std::atoll(sz.c_str()));
+        // Present only on legacy single-file items. The page does not need it,
+        // but its absence is what tells the two kinds of item apart.
+        j += ",\"directUrl\":\"" + JsonEscape(JsonString(r.body, "file_url")) + "\"}";
+        return j;
+    }
+
+    // Both ids go into a JS expression, so neither may be anything but digits.
+    bool IsDigits(const std::string& s) {
+        if (s.empty() || s.size() > 20) return false;
+        for (char c : s) if (c < '0' || c > '9') return false;
+        return true;
+    }
+
+    /**
+     * Have the client download a workshop item.
+     *
+     * The client is signed in and already knows how to do this -- it is the
+     * same call its own library UI makes, third argument and all. That is worth
+     * more than any of the standalone downloaders manage: no SteamCMD, no
+     * mirror, and it works for items served from a UGC depot rather than a
+     * plain file, which the public API cannot fetch at all.
+     *
+     * Downloading is not subscribing. This never touches the account's
+     * subscriptions; the item lands on disk and nothing appears on a profile.
+     */
+    std::string JsonWorkshopDownload(const std::string& appId, const std::string& id) {
+        if (!IsDigits(appId) || !IsDigits(id))
+            return "{\"error\":\"bad app or item id\"}";
+        std::string got;
+        const bool sent = EvalInTarget(
+            "\"SharedJSContext\"",
+            "(function(){try{SteamClient.Apps.DownloadWorkshopItem(" + appId + "," +
+            id + ",true);return 'sent';}catch(e){return 'ERR '+e;}})()", &got);
+        if (!sent)
+            return "{\"error\":\"Could not reach the Steam client. Is the CEF "
+                   "debugger enabled?\"}";
+        if (got.compare(0, 3, "ERR") == 0)
+            return "{\"error\":\"" + JsonEscape(got) + "\"}";
+        LOG_INFO("Workshop: asked the client for {} (app {})", id, appId);
+        return "{\"ok\":true}";
+    }
+
+    /**
+     * Where the client put it, once it has.
+     *
+     * Asks the client what it has downloaded rather than watching the
+     * filesystem: the item lands in the library the app is installed in, which
+     * is not necessarily the one Steam itself is in, and the client is the only
+     * thing that knows which.
+     */
+    std::string JsonWorkshopStatus(const std::string& appId, const std::string& id) {
+        if (!IsDigits(appId) || !IsDigits(id))
+            return "{\"error\":\"bad app or item id\"}";
+        std::string got;
+        EvalInTarget("\"SharedJSContext\"",
+                     "SteamClient.Apps.GetDownloadedWorkshopItems(" + appId + ")"
+                     ".then(function(v){return (v||[]).some(function(x){"
+                     "return String(x.publishedfileid)==='" + id + "';})?'yes':'no';})",
+                     &got, true);
+        const bool here = (got == "yes" || got == "true");
+
+        std::string path;
+        if (here) {
+            std::error_code ec;
+            for (const std::filesystem::path& root : WorkshopRoots()) {
+                const std::filesystem::path p =
+                    root / "steamapps" / "workshop" / "content" / appId / id;
+                if (std::filesystem::is_directory(p, ec)) { path = p.string(); break; }
+            }
+        }
+        return std::string("{\"downloaded\":") + (here ? "true" : "false") +
+               ",\"path\":\"" + JsonEscape(path) + "\"}";
+    }
+
+    /**
+     * Subscribe, or unsubscribe.
+     *
+     * Its own endpoint, never a step of the download, because this is the one
+     * part of the feature that changes something outside this machine: a
+     * subscription is account state and shows on a profile. The page asks
+     * before calling it.
+     */
+    std::string JsonWorkshopSubscribe(const std::string& appId, const std::string& id,
+                                      bool on) {
+        if (!IsDigits(appId) || !IsDigits(id))
+            return "{\"error\":\"bad app or item id\"}";
+        std::string got;
+        const bool sent = EvalInTarget(
+            "\"SharedJSContext\"",
+            "(function(){try{SteamClient.Apps.SubscribeWorkshopItem(" + appId + "," +
+            id + "," + (on ? "true" : "false") + ");return 'sent';}"
+            "catch(e){return 'ERR '+e;}})()", &got);
+        if (!sent || got.compare(0, 3, "ERR") == 0)
+            return "{\"error\":\"The client refused: " + JsonEscape(got) + "\"}";
+        LOG_INFO("Workshop: {} {} (app {})", on ? "subscribed" : "unsubscribed", id, appId);
+        return std::string("{\"ok\":true,\"subscribed\":") + (on ? "true" : "false") + "}";
+    }
+
     /**
      * Take a manifest out of service.
      *
@@ -2226,6 +2418,28 @@ namespace {
                    std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
+    // The Workshop tab's lease, kept apart from the Unlocker's so a tab only
+    // ever hooks the pages it is showing: the store must not grow Subscribe
+    // hooks, and a community page must not have its prices rewritten.
+    std::atomic<long long> g_workshopUntil{0};
+
+    bool WorkshopModeOn() {
+        return g_workshopUntil.load(std::memory_order_acquire) > SteadyMs();
+    }
+
+    std::string JsonWorkshopMode(const std::string& fullPath) {
+        const std::string set = QueryParam(fullPath, "set");
+        if (!set.empty()) {
+            const bool on = (set == "1" || set == "true");
+            g_workshopUntil.store(
+                on ? SteadyMs() + std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      kUnlockerLease).count()
+                   : 0,
+                std::memory_order_release);
+        }
+        return std::string("{\"on\":") + (WorkshopModeOn() ? "true" : "false") + "}";
+    }
+
     bool UnlockerModeOn() {
         return g_unlockerUntil.load(std::memory_order_acquire) > SteadyMs();
     }
@@ -2267,7 +2481,14 @@ namespace {
      */
     bool BridgeAllows(const std::string& path) {
         const std::string p = path.substr(0, path.find('?'));
-        return p == "/api/sources" || p == "/api/install";
+        // Deliberately a list rather than a prefix: this is the whole surface a
+        // page on Valve's domain can reach. Subscribe is on it because the hook
+        // asks first -- the dialog it opens is the confirmation -- and it is
+        // listed by name so adding a route under /api/workshop later does not
+        // silently widen what a web page can do.
+        return p == "/api/sources" || p == "/api/install" ||
+               p == "/api/workshop/download" || p == "/api/workshop/status" ||
+               p == "/api/workshop/info" || p == "/api/workshop/subscribe";
     }
 
     /**
@@ -2285,7 +2506,8 @@ namespace {
      * the injector loop notices and starts a new one.
      */
     void StoreBridgeThread(std::string wsUrl, std::string script,
-                           std::shared_ptr<std::atomic<bool>> alive) {
+                           std::shared_ptr<std::atomic<bool>> alive,
+                           bool workshop) {
         WebSocket s;
         if (!s.Open(wsUrl)) { alive->store(false); return; }
         // Short enough that a mode change reaches the page promptly, since the
@@ -2329,7 +2551,7 @@ namespace {
                  msg.find("\"Page.frameNavigated\"") != std::string::npos))
                 needPush = true;
 
-            const bool on = UnlockerModeOn();
+            const bool on = workshop ? WorkshopModeOn() : UnlockerModeOn();
             if (needPush || on != pushed) {
                 s.Post("Runtime.evaluate",
                        "{\"expression\":\"" +
@@ -2373,6 +2595,7 @@ namespace {
             return JsonSearch(term);
         }
         if (path == "/api/unlocker/mode") return JsonUnlockerMode(fullPath);
+        if (path == "/api/workshop/mode") return JsonWorkshopMode(fullPath);
 
         // Fixes. The catalog and the per-app list are free; the download is the
         // one call that needs the user's own lua.tools token.
@@ -2440,6 +2663,18 @@ namespace {
         if (path == "/api/update/apply")
             return JsonSourceApply(QueryParam(fullPath, "auto") == "1");
         if (path == "/api/update/last") return JsonLastUpdate();
+        if (path == "/api/workshop/info")
+            return JsonWorkshopInfo(QueryParam(fullPath, "q"));
+        if (path == "/api/workshop/download")
+            return JsonWorkshopDownload(QueryParam(fullPath, "appid"),
+                                        QueryParam(fullPath, "id"));
+        if (path == "/api/workshop/status")
+            return JsonWorkshopStatus(QueryParam(fullPath, "appid"),
+                                      QueryParam(fullPath, "id"));
+        if (path == "/api/workshop/subscribe")
+            return JsonWorkshopSubscribe(QueryParam(fullPath, "appid"),
+                                         QueryParam(fullPath, "id"),
+                                         QueryParam(fullPath, "set") != "0");
         if (path == "/api/update/autoinstall")
             return JsonAutoInstall(QueryParam(fullPath, "set"));
         if (path == "/api/assets") {
@@ -2571,6 +2806,9 @@ namespace {
         // Store integration. A separate script because it runs in a separate
         // target: the store is ordinary web pages, not the client's React app.
         const std::string store = ReadWholeFile(uiDir / "luaflipper.store.js");
+        // The workshop, on the community domain, hooking Subscribe the way the
+        // store script hooks Add to Cart.
+        const std::string shop = ReadWholeFile(uiDir / "luaflipper.workshop.js");
         // The nav menu as a real window. Lives in SharedJSContext because that
         // is where g_PopupManager is; optional, and its absence only costs the
         // popup route.
@@ -2587,6 +2825,7 @@ namespace {
         std::string lastShared;
         // Store targets we are bridging, and whether that bridge is still up.
         std::map<std::string, std::shared_ptr<std::atomic<bool>>> storeTargets;
+        std::map<std::string, std::shared_ptr<std::atomic<bool>>> shopTargets;
         bool haveClasses = false;
         // Each distinct failure is reported once. Without this the loop is
         // silent when it never succeeds, which is exactly when a log is needed.
@@ -2622,7 +2861,7 @@ namespace {
                     }
                     auto alive = std::make_shared<std::atomic<bool>>(true);
                     storeTargets[t] = alive;
-                    std::thread(StoreBridgeThread, t, store, alive).detach();
+                    std::thread(StoreBridgeThread, t, store, alive, false).detach();
                     LOG_INFO("LuaFlipperUI: store bridge attached to {}", t);
                 }
                 // Forget the ones that are gone, or the map grows for as long as
@@ -2630,6 +2869,26 @@ namespace {
                 for (auto it = storeTargets.begin(); it != storeTargets.end();)
                     it = (std::find(live.begin(), live.end(), it->first) == live.end())
                              ? storeTargets.erase(it) : std::next(it);
+            }
+
+            // The same treatment for the community, which is where workshop
+            // pages live. Its own map and its own script; the two never mix.
+            if (!shop.empty()) {
+                const std::vector<std::string> live = CommunityTargets(list);
+                for (const std::string& t : live) {
+                    auto held = shopTargets.find(t);
+                    if (held != shopTargets.end()) {
+                        if (held->second->load()) continue;
+                        shopTargets.erase(held);
+                    }
+                    auto alive = std::make_shared<std::atomic<bool>>(true);
+                    shopTargets[t] = alive;
+                    std::thread(StoreBridgeThread, t, shop, alive, true).detach();
+                    LOG_INFO("LuaFlipperUI: workshop bridge attached to {}", t);
+                }
+                for (auto it = shopTargets.begin(); it != shopTargets.end();)
+                    it = (std::find(live.begin(), live.end(), it->first) == live.end())
+                             ? shopTargets.erase(it) : std::next(it);
             }
 
             // SharedJSContext holds Steam's popup manager and nothing of ours,

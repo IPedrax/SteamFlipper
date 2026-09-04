@@ -66,6 +66,12 @@ namespace LuaFlipperDownload {
     //   {"ok":true,"applied":7,"dir":"..","backed":2,"rejected":[..]}
     // Password-protected archives are reported as such rather than as a
     // corrupt file; they are common enough at the origin to be worth naming.
+    // Every Steam library root on this machine, the Steam directory first.
+    // Read from libraryfolders.vdf, so a second drive is included; a path that
+    // is listed but not mounted is returned too, since only the caller knows
+    // what it is about to look for inside it.
+    std::vector<std::string> Libraries(const std::string& steamPath);
+
     // Where Steam installed an app, or "" when it did not: the folder a fix is
     // meant to be extracted into. Walks libraryfolders.vdf, so a game on a
     // second drive is found; "" also covers a library that is not mounted.

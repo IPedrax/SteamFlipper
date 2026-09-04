@@ -4646,6 +4646,229 @@
     return wrap;
   }
 
+  /**
+   * Workshop downloads, done by the client itself.
+   *
+   * Every standalone workshop downloader works around not being Steam: they
+   * drive SteamCMD with an anonymous login, which only covers the games in
+   * Steam's dedicated-server sub, or they ask the public API for a file_url,
+   * which only legacy single-file items have -- measured across sixty-four
+   * popular items, about one in six. This module is running inside a signed-in
+   * client, so it can just ask the client, which is the same call the library's
+   * own mod manager makes and works for depot-backed items too.
+   *
+   * Downloading and subscribing are kept apart on purpose. The download writes
+   * a folder on this machine; a subscription is account state and shows on a
+   * public profile, so it is a second, deliberate button.
+   */
+  function workshop(data, el) {
+    var wrap = style(el("div"), { position: "relative" });
+    var page = style(el("div"), { position: "relative", zIndex: "1", maxWidth: "780px" });
+    wrap.appendChild(page);
+
+    page.appendChild(dialogHead(el, "Workshop"));
+    page.appendChild(style(el("div", null,
+      "Paste a workshop link or its id. The download is done by Steam itself, " +
+      "so it works for the same items the client can install \u2014 including " +
+      "the depot-backed ones a plain link cannot reach."), {
+      fontSize: "13px", color: SET.desc, marginBottom: "16px", maxWidth: "62ch"
+    }));
+
+    var row = style(el("div"), { display: "flex", gap: "8px", marginBottom: "14px" });
+    var box = style(el("input"), {
+      flex: "1 1 auto", minWidth: "0", background: SET.field, color: "#ffffff",
+      border: "1px solid " + SET.rule, borderRadius: "3px", padding: "9px 12px",
+      fontSize: "13px", outline: "none"
+    });
+    box.type = "text";
+    box.placeholder = "https://steamcommunity.com/sharedfiles/filedetails/?id=\u2026";
+    var look = dialogBtn(el, "Look up");
+    row.appendChild(box);
+    row.appendChild(look);
+    page.appendChild(row);
+
+    var out = el("div");
+    page.appendChild(out);
+
+    function say(msg, colour) {
+      only(out, style(el("div", null, text(msg)), {
+        fontSize: "13px", color: colour || SET.desc, padding: "10px 0"
+      }));
+    }
+
+    function lookup() {
+      var q = text(box.value).trim();
+      if (!q) { say("Paste a workshop link or id first."); return; }
+      look.busyLook(true);
+      look.textContent = "Looking";
+      fetch(API + "workshop/info?q=" + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          look.busyLook(false);
+          look.textContent = "Look up";
+          if (!res || res.error) { say(text(res && res.error) || "No answer.", "#e7a94a"); return; }
+          show(res);
+        })
+        .catch(function (e) {
+          look.busyLook(false);
+          look.textContent = "Look up";
+          say("Could not reach SteamFlipper: " + why(e), "#e7a94a");
+        });
+    }
+
+    look.addEventListener("click", lookup);
+    box.addEventListener("keydown", function (ev) { if (ev.key === "Enter") lookup(); });
+
+    function show(item) {
+      var card = style(el("div"), {
+        display: "flex", gap: "14px", padding: "14px", borderRadius: "3px",
+        background: SET.field, alignItems: "flex-start"
+      });
+
+      if (item.preview) {
+        var img = el("img");
+        img.src = text(item.preview);
+        img.alt = "";
+        style(img, {
+          width: "120px", height: "68px", objectFit: "cover", borderRadius: "3px",
+          flex: "0 0 120px", background: INSET
+        });
+        card.appendChild(img);
+      }
+
+      var side = style(el("div"), { flex: "1 1 auto", minWidth: "0" });
+      side.appendChild(style(el("div", null, text(item.title) || "Untitled item"), {
+        fontSize: "15px", fontWeight: "bold", color: "#ffffff", marginBottom: "3px",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+      }));
+      var facts = ["app " + text(item.appid), "id " + text(item.id)];
+      if (num(item.bytes)) facts.push(bytes(num(item.bytes)));
+      side.appendChild(style(el("div", null, facts.join("  \u00b7  ")), {
+        fontSize: "12px", color: SET.desc, marginBottom: "10px"
+      }));
+
+      var acts = style(el("div"), { display: "flex", gap: "8px", flexWrap: "wrap" });
+      var get = dialogBtn(el, "Download");
+      var sub = dialogBtn(el, "Subscribe");
+      acts.appendChild(get);
+      acts.appendChild(sub);
+      side.appendChild(acts);
+
+      var said = style(el("div", null, ""), {
+        fontSize: "12px", lineHeight: "17px", color: SET.desc, marginTop: "10px",
+        wordBreak: "break-word", userSelect: "text", webkitUserSelect: "text"
+      });
+      side.appendChild(said);
+      card.appendChild(side);
+      only(out, card);
+
+      /* ------------------------------------------------------- download --- */
+
+      get.addEventListener("click", function () {
+        get.busyLook(true);
+        get.textContent = "Downloading";
+        said.style.color = SET.desc;
+        said.textContent = "Asked Steam for it. Large items take as long as any " +
+                           "other download.";
+        fetch(API + "workshop/download?appid=" + encodeURIComponent(text(item.appid)) +
+              "&id=" + encodeURIComponent(text(item.id)))
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (!res || res.error) throw new Error(text(res && res.error) || "refused");
+            poll(0);
+          })
+          .catch(function (e) {
+            get.busyLook(false);
+            get.textContent = "Try again";
+            said.style.color = "#e7a94a";
+            said.textContent = text(e && e.message) || why(e);
+          });
+      });
+
+      // Steam reports the item as downloaded only once it has finished, so this
+      // watches rather than guesses. Ninety tries at two seconds covers a large
+      // item without waiting forever on one that failed silently.
+      function poll(n) {
+        fetch(API + "workshop/status?appid=" + encodeURIComponent(text(item.appid)) +
+              "&id=" + encodeURIComponent(text(item.id)))
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (res && res.downloaded) {
+              get.busyLook(true);
+              get.textContent = "Downloaded";
+              said.style.color = "#a4d007";
+              said.textContent = text(res.path) ||
+                "Downloaded. Steam did not say where it put it.";
+              return;
+            }
+            if (n > 90) {
+              get.busyLook(false);
+              get.textContent = "Try again";
+              said.style.color = "#e7a94a";
+              said.textContent = "Steam has not reported it after three minutes. " +
+                "Check Downloads in the client \u2014 an item for a game you do " +
+                "not have installed may not start at all.";
+              return;
+            }
+            setTimeout(function () { poll(n + 1); }, 2000);
+          })
+          .catch(skip);
+      }
+
+      /* ------------------------------------------------------ subscribe --- */
+
+      /*
+       * Two clicks, always.
+       *
+       * Downloading writes a folder here; subscribing writes to the account and
+       * shows on a public profile. That difference is the user's to make, so the
+       * button asks rather than assuming the second follows the first.
+       */
+      sub.addEventListener("click", function () {
+        if (sub.textContent !== "Subscribe") return;
+        sub.textContent = "Confirm subscribe";
+        said.style.color = "#e7a94a";
+        said.textContent = "Subscribing adds this to your Steam account and it " +
+          "becomes visible on your profile. Downloading does neither. Click " +
+          "again to confirm.";
+        setTimeout(function () {
+          if (sub.textContent === "Confirm subscribe") sub.textContent = "Subscribe";
+        }, 8000);
+
+        sub.onclick = function () {
+          sub.onclick = null;
+          sub.busyLook(true);
+          sub.textContent = "Subscribing";
+          fetch(API + "workshop/subscribe?appid=" + encodeURIComponent(text(item.appid)) +
+                "&id=" + encodeURIComponent(text(item.id)) + "&set=1")
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+              sub.busyLook(false);
+              if (!res || res.error) {
+                sub.textContent = "Subscribe";
+                said.style.color = "#e7a94a";
+                said.textContent = text(res && res.error) || "The client refused.";
+                return;
+              }
+              sub.textContent = "Subscribed";
+              sub.busyLook(true);
+              said.style.color = "#a4d007";
+              said.textContent = "Subscribed. Steam will keep it updated, and it " +
+                "is on your profile until you unsubscribe in the client.";
+            })
+            .catch(function (e) {
+              sub.busyLook(false);
+              sub.textContent = "Subscribe";
+              said.style.color = "#e7a94a";
+              said.textContent = "Could not reach SteamFlipper: " + why(e);
+            });
+        };
+      });
+    }
+
+    return wrap;
+  }
+
   /* ------------------------------------------------------------- export --- */
 
   // Assigned once, at the end, so a parse error higher up leaves the global
@@ -4658,6 +4881,7 @@
     manage: manage,
     unlocker: addPage,
     fixes: fixes,
+    workshop: workshop,
     // Config is the settings dialog, and cloud saves, updates and status are
     // sections inside it rather than pages of their own: they are all answers
     // to "how is this module set up", and three dropdown entries for one
