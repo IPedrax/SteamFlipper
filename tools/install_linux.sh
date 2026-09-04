@@ -58,6 +58,16 @@ find_steam() {
     return 1
 }
 
+# Steam installed as a Flatpak, which this does not support: the module gets in
+# by replacing a library beside the Steam binary, and inside a Flatpak that
+# library belongs to the runtime rather than to the user. Worth finding anyway,
+# so the failure says what is wrong instead of "no Steam install found".
+FLATPAK_STEAM="${HOME}/.var/app/com.valvesoftware.Steam/.local/share/Steam"
+find_flatpak_steam() {
+    [ -d "${FLATPAK_STEAM}/ubuntu12_32" ] && { echo "${FLATPAK_STEAM}"; return; }
+    return 1
+}
+
 # --- uninstall ---------------------------------------------------------------
 uninstall() {
     say "Removing SteamFlipper"
@@ -157,11 +167,32 @@ done
 
 # The client is 32-bit, so a multilib toolchain is mandatory. Detect it by
 # actually compiling rather than guessing at distro package names.
+# An ostree-booted system is an atomic image -- Bazzite, Silverblue, Kinoite,
+# SteamOS-alikes. dnf there is a shim that refuses and points at the
+# documentation, so printing a dnf line would be telling someone to run a
+# command their system has already decided to reject.
+is_atomic() { [ -f /run/ostree-booted ]; }
+
 # No curl here on purpose. The module dlopens libcurl at runtime and the build
 # vendors the constants it needs, so curl development packages are not required
-# to build -- which matters on SteamOS, where installing them means unlocking
-# the read-only filesystem for headers the next update removes again.
+# to build -- which matters on an image-based system, where installing them
+# means layering packages the next update replaces.
 deps_hint() {
+    if is_atomic; then
+        warn "  This is an atomic image, so the toolchain belongs in a container"
+        warn "  rather than layered onto the system:"
+        warn ""
+        warn "    distrobox create --name steamflipper --image fedora:41"
+        warn "    distrobox enter steamflipper"
+        warn "    sudo dnf install -y @development-tools cmake ninja-build git \\"
+        warn "                        glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686"
+        warn ""
+        warn "  Then clone and run this installer from inside that container. It"
+        warn "  shares your home directory, so everything still lands on the host."
+        warn "  Close Steam on the host first -- the check below cannot see host"
+        warn "  processes from inside a container."
+        return
+    fi
     warn "  Arch    : pacman -S --needed gcc-multilib lib32-glibc lib32-openssl"
     warn "  Debian  : dpkg --add-architecture i386 && apt update &&"
     warn "            apt install gcc-multilib g++-multilib libc6-dev-i386 libssl-dev:i386"
@@ -200,11 +231,33 @@ int main(void){return 0;}' | gcc -m32 -x c - -lcrypto -o /dev/null 2>/dev/null; 
 fi
 say "    32-bit toolchain + libraries OK"
 
-STEAM_DIR="$(find_steam)" || die "no Steam install found (looked for ubuntu12_32/); set SF_STEAM_DIR"
+if ! STEAM_DIR="$(find_steam)"; then
+    if find_flatpak_steam >/dev/null; then
+        warn "Found Steam installed as a Flatpak:"
+        warn "  ${FLATPAK_STEAM}"
+        warn ""
+        warn "That is not supported. SteamFlipper gets into the client by replacing"
+        warn "a library next to the Steam binary, and in a Flatpak that library"
+        warn "belongs to the read-only runtime. Install Steam natively -- on an"
+        warn "atomic image, the native package or the one your image already ships"
+        warn "in game mode -- and run this again."
+        die  "Flatpak Steam is not supported"
+    fi
+    die "no Steam install found (looked for ubuntu12_32/); set SF_STEAM_DIR"
+fi
 say "    Steam at ${STEAM_DIR}"
 
 if pgrep -x steam >/dev/null 2>&1; then
     die "Steam is running — close it first: steam -shutdown"
+fi
+
+# That check only sees processes this namespace can see. Run from a container
+# -- which is how an atomic image gets a toolchain -- it will happily report
+# nothing while Steam is up on the host, and installing over a running client
+# is the most common way this goes wrong.
+if [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then
+    warn "Running inside a container: cannot tell whether Steam is up on the host."
+    warn "Make sure you ran 'steam -shutdown' there before continuing."
 fi
 
 # --- build -------------------------------------------------------------------

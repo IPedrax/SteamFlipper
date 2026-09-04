@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing — a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.5 — 2026-09-04
+
+- Atomic images (Bazzite, Silverblue, Kinoite) get build instructions that work: a container, not a `dnf` line their system refuses
+- A Flatpak Steam is now recognised and explained instead of reported as "no Steam install found"
+- Warns when run from a container that it cannot see whether Steam is still up on the host
+
 ## 1.1.4 — 2026-09-03
 
 - Builds on Steam Deck. libcurl development headers are no longer needed, which SteamOS cannot supply without unlocking its read-only filesystem

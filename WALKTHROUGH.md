@@ -33,6 +33,19 @@ sudo dnf install @development-tools cmake ninja-build \
         openssl-devel.i686
 ```
 
+**On an atomic image** (Bazzite, Silverblue, Kinoite, SteamOS), `dnf` is a shim that refuses and points at your image's documentation. Build in a container instead — it shares your home directory, so everything still lands on the host:
+
+```bash
+distrobox create --name steamflipper --image fedora:41
+distrobox enter steamflipper
+sudo dnf install -y @development-tools cmake ninja-build git \
+                    glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686
+```
+
+Then clone and run the installer from inside that container. Close Steam **on the host** first — the installer's "Steam is running" check cannot see host processes from inside a container, and installing over a running client is the usual way this goes wrong.
+
+> Steam must be installed natively. A Flatpak Steam is not supported: the module gets in by replacing a library next to the Steam binary, and in a Flatpak that library belongs to the read-only runtime. The installer detects this and says so.
+
 ### 2. Close Steam
 
 A step of its own because skipping it is the usual way this goes wrong. The
