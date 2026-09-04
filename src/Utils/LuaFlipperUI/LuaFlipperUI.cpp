@@ -888,7 +888,15 @@ namespace {
             }
 
             if (at == std::string::npos) {
-                body.insert(end, key + " = " + rawValue + "\n");
+                // Back up over the blank lines that separate this section from
+                // the next, so a new key joins the section it belongs to
+                // instead of landing against the following header. TOML does
+                // not care; someone reading their own config does.
+                size_t at2 = end;
+                while (at2 > sec && (body[at2 - 1] == '\n' || body[at2 - 1] == '\r') &&
+                       at2 >= 2 && (body[at2 - 2] == '\n' || body[at2 - 2] == '\r'))
+                    at2--;
+                body.insert(at2, key + " = " + rawValue + "\n");
             } else {
                 size_t lineEnd = body.find('\n', at);
                 if (lineEnd == std::string::npos) lineEnd = body.size();
