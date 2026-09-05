@@ -264,9 +264,18 @@ probe() {                            # probe <source> [compiler args...]
     local src="$1"; shift
     PROBE_ERR="$(printf '%s\n' "${src}" | g++ -m32 -x c++ - "$@" -o /dev/null 2>&1)"
 }
+# The diagnosis is at the END of a compiler's output, not the start: the first
+# lines are the include chain that led there. head -2 showed
+#   In file included from /usr/include/c++/14/string:38,
+#                    from <stdin>:1:
+# and cut off the "fatal error: ... No such file" that says what is actually
+# wrong. So this finds the error line and shows that.
 show_probe_err() {
     [ -n "${PROBE_ERR:-}" ] || return 0
-    printf '%s\n' "${PROBE_ERR}" | head -2 | while IFS= read -r line; do
+    local shown
+    shown="$(printf '%s\n' "${PROBE_ERR}" | grep -m2 -E 'error:|Error' || true)"
+    [ -n "${shown}" ] || shown="$(printf '%s\n' "${PROBE_ERR}" | tail -3)"
+    printf '%s\n' "${shown}" | while IFS= read -r line; do
         warn "    ${line}"
     done
 }
@@ -361,6 +370,26 @@ elif container_engine >/dev/null; then
         die "the container build failed too"
     }
     NO_BUILD=1
+elif [ -f /run/.containerenv ] || [ -f /.dockerenv ]; then
+    # Already inside a container, so there is no engine here to fall back to.
+    # The answer is not to fix this container: it is to leave it, because the
+    # host can now do the whole job with one command.
+    warn "${HOST_BUILD_PROBLEM}"
+    show_probe_err
+    warn ""
+    warn "This is running inside a container, and containers rarely have podman"
+    warn "or docker in them, so there is nothing to fall back to here."
+    warn ""
+    warn "You no longer need this container. Since 1.2.0 the installer builds in"
+    warn "one by itself, so run it on the host instead:"
+    warn ""
+    warn "    exit                       # leave this container"
+    warn "    cd ${REPO_ROOT##*/} && ./tools/install_linux.sh"
+    warn ""
+    warn "The host needs podman or docker and nothing else. To stay in here"
+    warn "instead, install the packages for this container's distribution:"
+    deps_hint
+    die "this machine cannot build a 32-bit module"
 else
     warn "${HOST_BUILD_PROBLEM}"
     show_probe_err

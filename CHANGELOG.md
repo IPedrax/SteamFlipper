@@ -7,6 +7,11 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.1 — 2026-09-05
+
+- Failed checks show the compiler's error line instead of the include chain above it, which was the half that says nothing
+- Running inside a container with no engine to fall back to now says to run the installer on the host instead, which is the actual answer since 1.2.0
+
 ## 1.2.0 — 2026-09-05
 
 - The installer can build in a container, so a machine that cannot assemble a 32-bit toolchain no longer needs one
