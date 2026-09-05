@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.6 — 2026-09-04
+
+- The prerequisite check requires `g++`, so a toolchain with only the C compiler is caught by name instead of failing later inside CMake
+- Fedora instructions include `gcc-c++`: the `@development-tools` group installs the C compiler but not the C++ one
+- The 32-bit and OpenSSL checks compile C++ now, which is what the build actually does
+
 ## 1.1.5 — 2026-09-04
 
 - Atomic images (Bazzite, Silverblue, Kinoite) get build instructions that work: a container, not a `dnf` line their system refuses

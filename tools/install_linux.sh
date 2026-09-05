@@ -160,7 +160,7 @@ done
 # --- prerequisites -----------------------------------------------------------
 say "Checking prerequisites"
 missing=()
-for t in cmake ninja python3 gcc readelf; do
+for t in cmake ninja python3 gcc g++ readelf; do
     command -v "${t}" >/dev/null 2>&1 || missing+=("${t}")
 done
 [ ${#missing[@]} -gt 0 ] && die "missing tools: ${missing[*]}"
@@ -184,7 +184,7 @@ deps_hint() {
         warn ""
         warn "    distrobox create --name steamflipper --image fedora:41"
         warn "    distrobox enter steamflipper"
-        warn "    sudo dnf install -y @development-tools cmake ninja-build git \\"
+        warn "    sudo dnf install -y @development-tools gcc-c++ cmake ninja-build git \\"
         warn "                        glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686"
         warn ""
         warn "  Then clone and run this installer from inside that container. It"
@@ -196,13 +196,26 @@ deps_hint() {
     warn "  Arch    : pacman -S --needed gcc-multilib lib32-glibc lib32-openssl"
     warn "  Debian  : dpkg --add-architecture i386 && apt update &&"
     warn "            apt install gcc-multilib g++-multilib libc6-dev-i386 libssl-dev:i386"
-    warn "  Fedora  : dnf install glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686"
+    warn "  Fedora  : dnf install gcc-c++ glibc-devel.i686 libstdc++-devel.i686 \\"
+    warn "                        openssl-devel.i686"
 }
 
 if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
-    warn "gcc cannot build 32-bit binaries — install multilib support:"
+    warn "gcc cannot build 32-bit binaries. Install multilib support:"
     deps_hint
     die  "32-bit toolchain required"
+fi
+
+# Separately, because a container can easily have gcc without g++ and this is a
+# C++ project: Fedora's @development-tools group installs the C compiler but
+# not gcc-c++, so the checks above passed and CMake then stopped at "No
+# CMAKE_CXX_COMPILER could be found". Testing what the build actually uses is
+# the only way that stays honest.
+if ! echo 'int main(){return 0;}' | g++ -m32 -x c++ - -o /dev/null 2>/dev/null; then
+    warn "g++ cannot build 32-bit C++ binaries, which is what this project is."
+    warn "The C compiler working does not imply the C++ one is installed."
+    deps_hint
+    die  "32-bit C++ toolchain required"
 fi
 
 # OpenSSL is the one external system library the 32-bit link needs (everything
@@ -210,8 +223,8 @@ fi
 # *preference*, not a restriction, so without lib32-openssl it silently resolves
 # the host's 64-bit libcrypto, configures fine, and dies much later at link with
 # "file in wrong format" — naming no package. Catch it here, by name.
-if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -lcrypto -o /dev/null 2>/dev/null; then
-    warn "32-bit OpenSSL (libcrypto) is missing — the build would fail at link"
+if ! echo 'int main(){return 0;}' | g++ -m32 -x c++ - -lcrypto -o /dev/null 2>/dev/null; then
+    warn "32-bit OpenSSL (libcrypto) is missing. The build would fail at link"
     warn "with an opaque 'file in wrong format'. Install the 32-bit libraries:"
     deps_hint
     die  "32-bit OpenSSL required"
@@ -224,8 +237,8 @@ fi
 # exactly how a Steam Deck reported a failed install, for curl rather than
 # OpenSSL, so the check now covers headers as well as linking.
 if ! echo '#include <openssl/evp.h>
-int main(void){return 0;}' | gcc -m32 -x c - -lcrypto -o /dev/null 2>/dev/null; then
-    warn "32-bit OpenSSL headers are missing — CMake would fail to configure."
+int main(){return 0;}' | g++ -m32 -x c++ - -lcrypto -o /dev/null 2>/dev/null; then
+    warn "32-bit OpenSSL headers are missing. CMake would fail to configure."
     deps_hint
     die  "32-bit OpenSSL headers required"
 fi

@@ -28,7 +28,7 @@ sudo apt install build-essential cmake ninja-build gcc-multilib \
         g++-multilib libc6-dev-i386 libssl-dev:i386
 
 # Fedora · Nobara
-sudo dnf install @development-tools cmake ninja-build \
+sudo dnf install @development-tools gcc-c++ cmake ninja-build \
         glibc-devel.i686 libstdc++-devel.i686 \
         openssl-devel.i686
 ```
@@ -38,7 +38,7 @@ sudo dnf install @development-tools cmake ninja-build \
 ```bash
 distrobox create --name steamflipper --image fedora:41
 distrobox enter steamflipper
-sudo dnf install -y @development-tools cmake ninja-build git \
+sudo dnf install -y @development-tools gcc-c++ cmake ninja-build git \
                     glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686
 ```
 
