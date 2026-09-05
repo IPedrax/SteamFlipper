@@ -7,6 +7,11 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.7 — 2026-09-04
+
+- Failed prerequisite checks print what the compiler actually said, so a missing package is distinguishable from one that is installed but unusable at 32-bit
+- Previously the probes discarded the error and printed a guess
+
 ## 1.1.6 — 2026-09-04
 
 - The prerequisite check requires `g++`, so a toolchain with only the C compiler is caught by name instead of failing later inside CMake

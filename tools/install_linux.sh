@@ -200,6 +200,22 @@ deps_hint() {
     warn "                        openssl-devel.i686"
 }
 
+# Compile a snippet, and when it fails show the compiler's own first words.
+# "32-bit OpenSSL headers are missing" is an inference; "openssl/evp.h: No such
+# file or directory" is the fact, and it separates a package that was never
+# installed from one that is there but cannot be used at -m32. Without it the
+# only way to find out is to reproduce the probe by hand.
+probe() {                            # probe <source> [compiler args...]
+    local src="$1"; shift
+    PROBE_ERR="$(printf '%s\n' "${src}" | g++ -m32 -x c++ - "$@" -o /dev/null 2>&1)"
+}
+show_probe_err() {
+    [ -n "${PROBE_ERR:-}" ] || return 0
+    printf '%s\n' "${PROBE_ERR}" | head -2 | while IFS= read -r line; do
+        warn "    ${line}"
+    done
+}
+
 if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
     warn "gcc cannot build 32-bit binaries. Install multilib support:"
     deps_hint
@@ -211,9 +227,10 @@ fi
 # not gcc-c++, so the checks above passed and CMake then stopped at "No
 # CMAKE_CXX_COMPILER could be found". Testing what the build actually uses is
 # the only way that stays honest.
-if ! echo 'int main(){return 0;}' | g++ -m32 -x c++ - -o /dev/null 2>/dev/null; then
+if ! probe 'int main(){return 0;}'; then
     warn "g++ cannot build 32-bit C++ binaries, which is what this project is."
     warn "The C compiler working does not imply the C++ one is installed."
+    show_probe_err
     deps_hint
     die  "32-bit C++ toolchain required"
 fi
@@ -223,9 +240,10 @@ fi
 # *preference*, not a restriction, so without lib32-openssl it silently resolves
 # the host's 64-bit libcrypto, configures fine, and dies much later at link with
 # "file in wrong format" — naming no package. Catch it here, by name.
-if ! echo 'int main(){return 0;}' | g++ -m32 -x c++ - -lcrypto -o /dev/null 2>/dev/null; then
+if ! probe 'int main(){return 0;}' -lcrypto; then
     warn "32-bit OpenSSL (libcrypto) is missing. The build would fail at link"
     warn "with an opaque 'file in wrong format'. Install the 32-bit libraries:"
+    show_probe_err
     deps_hint
     die  "32-bit OpenSSL required"
 fi
@@ -236,9 +254,11 @@ fi
 # CMake after this script has already said the prerequisites were fine. That is
 # exactly how a Steam Deck reported a failed install, for curl rather than
 # OpenSSL, so the check now covers headers as well as linking.
-if ! echo '#include <openssl/evp.h>
-int main(){return 0;}' | g++ -m32 -x c++ - -lcrypto -o /dev/null 2>/dev/null; then
-    warn "32-bit OpenSSL headers are missing. CMake would fail to configure."
+if ! probe '#include <openssl/evp.h>
+int main(){return 0;}' -lcrypto; then
+    warn "OpenSSL headers cannot be compiled at -m32. CMake would fail to"
+    warn "configure. The compiler said:"
+    show_probe_err
     deps_hint
     die  "32-bit OpenSSL headers required"
 fi
