@@ -144,10 +144,15 @@ if [ -f "${STATE_FILE}" ] && grep -q '^millennium=1$' "${STATE_FILE}" 2>/dev/nul
     WITH_MILLENNIUM=1
 fi
 NO_BUILD=0
+# unset = decide automatically: build natively when the toolchain works, and
+# fall back to a container only when it does not.
+USE_CONTAINER=""
 for arg in "$@"; do
     case "${arg}" in
         --uninstall|-u)     uninstall; exit 0 ;;
         --no-build)         NO_BUILD=1 ;;
+        --container)        USE_CONTAINER=1 ;;
+        --no-container)     USE_CONTAINER=0 ;;
         --with-millennium)  WITH_MILLENNIUM=1; MILLENNIUM_EXPLICIT=1 ;;
         --no-millennium)    WITH_MILLENNIUM=0; MILLENNIUM_EXPLICIT=1 ;;
         -h|--help)
@@ -157,49 +162,99 @@ for arg in "$@"; do
     esac
 done
 
-# --- prerequisites -----------------------------------------------------------
-say "Checking prerequisites"
-missing=()
-for t in cmake ninja python3 gcc g++ readelf; do
-    command -v "${t}" >/dev/null 2>&1 || missing+=("${t}")
-done
-[ ${#missing[@]} -gt 0 ] && die "missing tools: ${missing[*]}"
-
-# The client is 32-bit, so a multilib toolchain is mandatory. Detect it by
-# actually compiling rather than guessing at distro package names.
-# An ostree-booted system is an atomic image -- Bazzite, Silverblue, Kinoite,
-# SteamOS-alikes. dnf there is a shim that refuses and points at the
-# documentation, so printing a dnf line would be telling someone to run a
-# command their system has already decided to reject.
+# An ostree-booted system is an atomic image: Bazzite, Silverblue, Kinoite.
+# dnf there is a shim that refuses and points at the documentation, so printing
+# a dnf line would be telling someone to run a command their system has already
+# decided to reject.
 is_atomic() { [ -f /run/ostree-booted ]; }
 
-# No curl here on purpose. The module dlopens libcurl at runtime and the build
-# vendors the constants it needs, so curl development packages are not required
-# to build -- which matters on an image-based system, where installing them
-# means layering packages the next update replaces.
+# The full list, kept in one place because it has been wrong three times: the
+# module needs zlib and the bootstrap needs X11 headers, and both were missing
+# from every list here until a container build without them failed.
+#
+# No curl: the module dlopens libcurl at runtime and the build vendors the
+# constants, so no curl development package is needed.
 deps_hint() {
     if is_atomic; then
-        warn "  This is an atomic image, so the toolchain belongs in a container"
-        warn "  rather than layered onto the system:"
+        warn "  This is an atomic image. Rather than layering a toolchain onto"
+        warn "  it, install podman and re-run -- the build then happens in a"
+        warn "  container and this machine needs no compiler at all:"
         warn ""
-        warn "    distrobox create --name steamflipper --image fedora:41"
-        warn "    distrobox enter steamflipper"
-        warn "    sudo dnf install -y @development-tools gcc-c++ cmake ninja-build git \\"
-        warn "                        glibc-devel.i686 libstdc++-devel.i686 openssl-devel.i686"
+        warn "    rpm-ostree install podman   # or: sudo dnf install podman"
         warn ""
-        warn "  Then clone and run this installer from inside that container. It"
-        warn "  shares your home directory, so everything still lands on the host."
-        warn "  Close Steam on the host first -- the check below cannot see host"
-        warn "  processes from inside a container."
+        warn "  Already have podman or docker? Re-running is all it takes."
         return
     fi
-    warn "  Arch    : pacman -S --needed gcc-multilib lib32-glibc lib32-openssl"
+    warn "  Arch    : pacman -S --needed base-devel gcc-multilib cmake ninja \\"
+    warn "                     lib32-glibc lib32-openssl lib32-zlib lib32-libxtst"
     warn "  Debian  : dpkg --add-architecture i386 && apt update &&"
-    warn "            apt install gcc-multilib g++-multilib libc6-dev-i386 libssl-dev:i386"
-    warn "  Fedora  : dnf install gcc-c++ glibc-devel.i686 libstdc++-devel.i686 \\"
-    warn "                        openssl-devel.i686"
+    warn "            apt install build-essential g++-multilib cmake ninja-build \\"
+    warn "                        libssl-dev:i386 zlib1g-dev:i386 libxtst-dev:i386"
+    warn "  Fedora  : dnf install @development-tools gcc-c++ cmake ninja-build \\"
+    warn "                        glibc-devel.i686 libstdc++-devel.i686 \\"
+    warn "                        openssl-devel.i686 zlib-devel.i686 libXtst-devel.i686"
+    warn ""
+    warn "  Or install podman/docker and re-run: the build then happens in a"
+    warn "  container and none of the above is needed."
 }
 
+# --- building in a container -------------------------------------------------
+#
+# Assembling a working 32-bit C++ toolchain is the single hardest part of
+# installing this, and it is different on every distribution: multilib packages
+# under four different names, headers split from libraries, and image-based
+# systems where none of it can be installed at all. Four consecutive releases
+# were spent on one user's machine finding missing pieces one report at a time.
+#
+# So this does not have to be solved on the host. The image below is pinned and
+# known to build both architectures, the repository is the only thing mounted
+# into it, and what comes out is what a native build would have produced.
+CONTAINER_IMAGE="${SF_CONTAINER_IMAGE:-docker.io/library/ubuntu:24.04}"
+
+container_engine() {
+    command -v podman 2>/dev/null && return 0
+    command -v docker 2>/dev/null && return 0
+    return 1
+}
+
+build_in_container() {
+    local engine
+    engine="$(container_engine)" || {
+        warn "No podman or docker found, so there is nowhere to build."
+        return 1
+    }
+    say "Building in ${CONTAINER_IMAGE##*/} via ${engine##*/} (first run pulls the image)"
+
+    # Root inside, because the packages have to be installed; the tree is handed
+    # back on the way out, including when the build fails, so a failure never
+    # leaves files the user cannot delete.
+    "${engine}" run --rm \
+        -v "${REPO_ROOT}:/src" \
+        -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+        -e SF_BUILD_TYPE="${BUILD_TYPE}" \
+        -w /src "${CONTAINER_IMAGE}" bash -uc '
+            trap "chown -R \"${HOST_UID}:${HOST_GID}\" /src 2>/dev/null || true" EXIT
+            export DEBIAN_FRONTEND=noninteractive
+            dpkg --add-architecture i386
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+                build-essential g++-multilib cmake ninja-build python3 file \
+                binutils ca-certificates git \
+                libssl-dev libssl-dev:i386 zlib1g-dev zlib1g-dev:i386 \
+                libx11-dev libx11-dev:i386 libxtst-dev libxtst-dev:i386
+            ./tools/build_linux.sh
+        ' || return 1
+
+    [ -f "${REPO_ROOT}/build/32/SteamFlipper.so" ] || {
+        warn "The container finished but produced no 32-bit module."
+        return 1
+    }
+    say "    container build finished"
+    return 0
+}
+
+# --- prerequisites -----------------------------------------------------------
+say "Checking prerequisites"
 # Compile a snippet, and when it fails show the compiler's own first words.
 # "32-bit OpenSSL headers are missing" is an inference; "openssl/evp.h: No such
 # file or directory" is the fact, and it separates a package that was never
@@ -216,63 +271,106 @@ show_probe_err() {
     done
 }
 
-if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
-    warn "gcc cannot build 32-bit binaries. Install multilib support:"
-    deps_hint
-    die  "32-bit toolchain required"
-fi
+# Can this machine build a 32-bit module?
+#
+# One question, asked once, answered without exiting: the caller decides what a
+# "no" means, because it means "install the packages" on an ordinary system and
+# "build in a container instead" everywhere else.
+#
+# Every probe compiles what it claims to test. That sounds obvious and was not:
+# the C++ probe used to compile a bare main(), which reads no standard library
+# header at all and passed on machines with no 32-bit libstdc++ whatsoever.
+HOST_BUILD_PROBLEM=""
+host_can_build() {
+    local t missing=()
+    for t in cmake ninja python3 gcc g++ readelf; do
+        command -v "${t}" >/dev/null 2>&1 || missing+=("${t}")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        HOST_BUILD_PROBLEM="missing tools: ${missing[*]}"
+        return 1
+    fi
 
-# Separately, because a container can easily have gcc without g++ and this is a
-# C++ project: Fedora's @development-tools group installs the C compiler but
-# not gcc-c++, so the checks above passed and CMake then stopped at "No
-# CMAKE_CXX_COMPILER could be found". Testing what the build actually uses is
-# the only way that stays honest.
-# <string> rather than a bare main, because a bare main reads no standard
-# library header at all: it compiles happily on a system with no 32-bit
-# libstdc++ headers whatsoever, and the first thing to actually fail is then
-# whichever later probe includes something. That is not hypothetical -- it sent
-# someone off installing OpenSSL packages for two rounds, because the OpenSSL
-# probe pulls in <cstdlib> and reported the resulting "bits/c++config.h: No
-# such file" as a missing OpenSSL header. A probe has to exercise the thing it
-# claims to be testing.
-if ! probe '#include <string>
+    if ! echo 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null 2>/dev/null; then
+        HOST_BUILD_PROBLEM="gcc cannot build 32-bit binaries"
+        return 1
+    fi
+
+    # <string> rather than a bare main: a bare main reads no header, so it
+    # cannot tell a working 32-bit C++ toolchain from a missing one.
+    if ! probe '#include <string>
 int main(){ std::string s; return s.size(); }'; then
-    warn "g++ cannot build 32-bit C++ binaries, which is what this project is."
-    warn "The C compiler working does not imply the C++ one is usable at -m32,"
-    warn "and 32-bit libstdc++ headers are a separate package from the compiler."
-    show_probe_err
-    deps_hint
-    die  "32-bit C++ toolchain required"
-fi
+        HOST_BUILD_PROBLEM="g++ cannot build 32-bit C++ (32-bit libstdc++ headers?)"
+        return 1
+    fi
 
-# OpenSSL is the one external system library the 32-bit link needs (everything
-# else is built from source). CMake's CMAKE_FIND_LIBRARY_CUSTOM_LIB_SUFFIX is a
-# *preference*, not a restriction, so without lib32-openssl it silently resolves
-# the host's 64-bit libcrypto, configures fine, and dies much later at link with
-# "file in wrong format" — naming no package. Catch it here, by name.
-if ! probe 'int main(){return 0;}' -lcrypto; then
-    warn "32-bit OpenSSL (libcrypto) is missing. The build would fail at link"
-    warn "with an opaque 'file in wrong format'. Install the 32-bit libraries:"
-    show_probe_err
-    deps_hint
-    die  "32-bit OpenSSL required"
-fi
+    # <format> is C++20 and arrived in GCC 13. Older compilers get through every
+    # check above and then fail deep in the build on a header nobody mentioned.
+    if ! probe '#include <format>
+int main(){ return (int)std::format("{}", 1).size(); }'; then
+        HOST_BUILD_PROBLEM="the C++ compiler is too old (needs <format>, GCC 13+)"
+        return 1
+    fi
 
-# And its headers, which are a separate package on some distributions and a
-# separate failure: find_package(OpenSSL) wants OPENSSL_INCLUDE_DIR, so a system
-# carrying the library but not the headers gets "Could NOT find OpenSSL" from
-# CMake after this script has already said the prerequisites were fine. That is
-# exactly how a Steam Deck reported a failed install, for curl rather than
-# OpenSSL, so the check now covers headers as well as linking.
-if ! probe '#include <openssl/evp.h>
+    if ! probe '#include <openssl/evp.h>
 int main(){return 0;}' -lcrypto; then
-    warn "OpenSSL headers cannot be compiled at -m32. CMake would fail to"
-    warn "configure. The compiler said:"
+        HOST_BUILD_PROBLEM="32-bit OpenSSL is missing or unusable"
+        return 1
+    fi
+
+    # zlib is a real dependency of the module and was never checked or
+    # documented, because it ships with the base system on the distribution
+    # this was written on and is a separate package almost everywhere else.
+    if ! probe '#include <zlib.h>
+int main(){ return (int)zlibVersion()[0]; }' -lz; then
+        HOST_BUILD_PROBLEM="32-bit zlib headers are missing"
+        return 1
+    fi
+
+    # The libXtst bootstrap includes Xlib. Checked here because it is built with
+    # the module now, and because a missing X11 header stops the install right
+    # at the end, after the whole module has compiled.
+    if ! probe '#include <X11/Xlib.h>
+#include <X11/extensions/XTest.h>
+int main(){ return 0; }'; then
+        HOST_BUILD_PROBLEM="32-bit X11/XTest headers are missing (the bootstrap needs them)"
+        return 1
+    fi
+    return 0
+}
+
+if [ "${NO_BUILD}" = "1" ]; then
+    :                                   # installing what is already built
+elif [ "${USE_CONTAINER}" = "1" ]; then
+    build_in_container || die "the container build failed"
+    NO_BUILD=1
+elif host_can_build; then
+    say "    toolchain OK"
+elif [ "${USE_CONTAINER}" = "0" ]; then
+    warn "${HOST_BUILD_PROBLEM}"
     show_probe_err
     deps_hint
-    die  "32-bit OpenSSL headers required"
+    die "this machine cannot build a 32-bit module"
+elif container_engine >/dev/null; then
+    warn "This machine cannot build a 32-bit module: ${HOST_BUILD_PROBLEM}"
+    show_probe_err
+    warn "Falling back to a container, which needs no toolchain on the host."
+    warn "Use --no-container to refuse this and fix the toolchain instead."
+    build_in_container || {
+        deps_hint
+        die "the container build failed too"
+    }
+    NO_BUILD=1
+else
+    warn "${HOST_BUILD_PROBLEM}"
+    show_probe_err
+    warn ""
+    warn "Either install the packages below, or install podman or docker and"
+    warn "run this again -- it will then build in a container and need no"
+    warn "toolchain here at all."
+    deps_hint
+    die "this machine cannot build a 32-bit module"
 fi
-say "    32-bit toolchain + libraries OK"
 
 if ! STEAM_DIR="$(find_steam)"; then
     if find_flatpak_steam >/dev/null; then
@@ -321,8 +419,15 @@ say "Installed module -> ${LIBDIR}/32/SteamFlipper.so"
 # --- build and install the bootstrap ----------------------------------------
 XTST="${STEAM_DIR}/ubuntu12_32/libXtst.so.6"
 TMP_BOOT="$(mktemp -d)"; trap 'rm -rf "${TMP_BOOT}"' EXIT
-gcc -m32 -shared -fPIC -O2 -o "${TMP_BOOT}/libXtst.so.6" "${BOOTSTRAP_SRC}" -ldl \
-    || die "bootstrap failed to build"
+PREBUILT_BOOT="${REPO_ROOT}/build/32/libXtst.so.6"
+if [ -f "${PREBUILT_BOOT}" ]; then
+    # Built alongside the module, which is what lets a machine with no working
+    # 32-bit toolchain install artifacts built elsewhere -- in a container, say.
+    cp -a "${PREBUILT_BOOT}" "${TMP_BOOT}/libXtst.so.6"
+else
+    gcc -m32 -shared -fPIC -O2 -o "${TMP_BOOT}/libXtst.so.6" "${BOOTSTRAP_SRC}" -ldl \
+        || die "bootstrap failed to build"
+fi
 
 # Back up the stock library exactly once, and never back up our own proxy.
 if [ -f "${XTST}" ] && ! grep -qaE "${MARKER_RE}" "${XTST}" 2>/dev/null; then

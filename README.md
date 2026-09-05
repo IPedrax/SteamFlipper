@@ -48,7 +48,7 @@ The Steam **client** is 32-bit, so a multilib toolchain is mandatory. The instal
 ```bash
 # Arch
 sudo pacman -S --needed base-devel cmake ninja git \
-                        gcc-multilib lib32-glibc lib32-openssl
+                        gcc-multilib lib32-glibc lib32-openssl lib32-zlib lib32-libxtst
 
 # Debian / Ubuntu / SteamOS
 sudo dpkg --add-architecture i386 && sudo apt update
@@ -58,7 +58,7 @@ sudo apt install build-essential cmake ninja-build gcc-multilib g++-multilib \
 # Fedora
 sudo dnf install @development-tools gcc-c++ cmake ninja-build \
                  glibc-devel.i686 libstdc++-devel.i686 \
-                 openssl-devel.i686
+                 openssl-devel.i686 zlib-devel.i686 libXtst-devel.i686
 ```
 
 **On an atomic image** (Bazzite, Silverblue, Kinoite, SteamOS), `dnf` is a shim that refuses and points at your image's documentation. Build in a container instead. It shares your home directory, so everything still lands on the host:
@@ -74,12 +74,26 @@ Then clone and run the installer from inside that container. Close Steam **on th
 
 > Steam must be installed natively. A Flatpak Steam is not supported: the module gets in by replacing a library next to the Steam binary, and in a Flatpak that library belongs to the read-only runtime. The installer detects this and says so.
 
+### <img src="assets/icons/layers.svg" width="17" align="absmiddle" alt="" /> No toolchain? Build in a container
+
+Assembling a working 32-bit C++ toolchain is the hardest part of installing this, and it differs on every distribution. If yours cannot do it, the installer builds in a pinned container instead and needs no compiler on the host at all:
+
+```bash
+./tools/install_linux.sh --container
+```
+
+It does this automatically when the host toolchain is missing or broken and `podman` or `docker` is present, so on an atomic image (Bazzite, Silverblue, Kinoite) installing podman is the whole preparation. `--no-container` refuses the fallback if you would rather fix the toolchain. Override the image with `SF_CONTAINER_IMAGE`.
+
+Only the repository is mounted into the container, and the tree is handed back to you afterwards, including when the build fails.
+
 ### <img src="assets/icons/layers.svg" width="17" align="absmiddle" alt="" /> Options
 
 | Command | What it does |
 |---|---|
 | `./tools/install_linux.sh` | **Default.** SteamFlipper only |
 | `./tools/install_linux.sh --with-millennium` | Also wire up Millennium. See below |
+| `./tools/install_linux.sh --container` | Build in a pinned container; no toolchain needed on the host |
+| `./tools/install_linux.sh --no-container` | Never fall back to a container, even if the toolchain is broken |
 | `./tools/install_linux.sh --no-build` | Reinstall from an existing `build/`, skipping the compile |
 | `./tools/install_linux.sh --uninstall` | Restore Steam to stock |
 

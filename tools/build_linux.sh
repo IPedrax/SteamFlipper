@@ -42,6 +42,18 @@ build_arch() {
     cmake --build "${build_dir}" --config "${BUILD_TYPE}" -j"${JOBS}"
 
     echo "  -> ${build_dir}/SteamFlipper.so"
+
+    # The libXtst bootstrap, built here rather than at install time. It is the
+    # only other thing that needs a compiler, and leaving it to the installer
+    # meant a machine that cannot build 32-bit C could not install artifacts
+    # somebody else had already built for it -- including ones built in a
+    # container by --container.
+    if [ "${arch}" = "32" ]; then
+        gcc -m32 -shared -fPIC -O2 \
+            -o "${build_dir}/libXtst.so.6" \
+            "${REPO_ROOT}/src/Bootstrap/Linux/sf_bootstrap.c" -ldl \
+            && echo "  -> ${build_dir}/libXtst.so.6"
+    fi
 }
 
 case "${ARCHES}" in

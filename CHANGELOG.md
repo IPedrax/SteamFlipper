@@ -7,6 +7,14 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.0 — 2026-09-05
+
+- The installer can build in a container, so a machine that cannot assemble a 32-bit toolchain no longer needs one
+- It falls back automatically when the host toolchain is missing or broken and podman or docker is present; `--container` forces it and `--no-container` refuses it
+- On an atomic image, installing podman is now the whole preparation
+- Two dependencies that were never declared or checked are: zlib, and the X11/XTest headers the bootstrap needs
+- The prerequisite checks now compile what they claim to test, including a C++20 `<format>` check that catches compilers older than GCC 13
+
 ## 1.1.8 — 2026-09-04
 
 - The 32-bit C++ check now compiles something that uses the standard library, so missing libstdc++ headers are reported as that
