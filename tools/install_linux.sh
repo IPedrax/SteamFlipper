@@ -228,8 +228,17 @@ build_in_container() {
     # Root inside, because the packages have to be installed; the tree is handed
     # back on the way out, including when the build fails, so a failure never
     # leaves files the user cannot delete.
+    #
+    # :z on the mount is not optional on Fedora, Bazzite or anything else with
+    # SELinux enforcing. Without it the bind mount keeps the host label, the
+    # container cannot execute anything under it, and the build dies with a
+    # bare "Permission denied" on a script that is plainly executable. It asks
+    # SELinux to relabel the tree as container-shareable.
+    #
+    # bash ./tools/... rather than ./tools/..., so the build does not depend on
+    # an executable bit surviving however the source arrived.
     "${engine}" run --rm \
-        -v "${REPO_ROOT}:/src" \
+        -v "${REPO_ROOT}:/src:z" \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         -e SF_BUILD_TYPE="${BUILD_TYPE}" \
         -w /src "${CONTAINER_IMAGE}" bash -uc '
@@ -242,7 +251,7 @@ build_in_container() {
                 binutils ca-certificates git \
                 libssl-dev libssl-dev:i386 zlib1g-dev zlib1g-dev:i386 \
                 libx11-dev libx11-dev:i386 libxtst-dev libxtst-dev:i386
-            ./tools/build_linux.sh
+            bash ./tools/build_linux.sh
         ' || return 1
 
     [ -f "${REPO_ROOT}/build/32/SteamFlipper.so" ] || {

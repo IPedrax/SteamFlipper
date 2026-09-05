@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.2 — 2026-09-05
+
+- The container build works on SELinux systems (Fedora, Bazzite, Silverblue), where it failed with "Permission denied" on a script that was plainly executable
+- The bind mount now asks SELinux to relabel it, which is required and was missing
+- The build no longer depends on an executable bit surviving however the source arrived
+
 ## 1.2.1 — 2026-09-05
 
 - Failed checks show the compiler's error line instead of the include chain above it, which was the half that says nothing
