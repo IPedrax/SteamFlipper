@@ -7,6 +7,11 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.6 — 2026-09-05
+
+- Warns when a Flatpak Steam exists alongside the native one, since installing into the native copy does nothing if the Flatpak is the one you launch
+- Images that ship Steam as a Flatpak often leave a native directory behind, and the installer would happily fill it
+
 ## 1.2.5 — 2026-09-05
 
 - The installer verifies its own work and says which piece is wrong, instead of reporting success and leaving you to find out nothing happened

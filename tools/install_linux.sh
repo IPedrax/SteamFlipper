@@ -424,6 +424,27 @@ if ! STEAM_DIR="$(find_steam)"; then
     fi
     die "no Steam install found (looked for ubuntu12_32/); set SF_STEAM_DIR"
 fi
+
+# Both can exist at once, and then installing into the native one is a no-op:
+# an image that ships Steam as a Flatpak leaves the native directory behind
+# from an earlier install, so everything here succeeds and the client that
+# actually runs never sees any of it. That is indistinguishable from a broken
+# install unless it is said out loud.
+if find_flatpak_steam >/dev/null && [ "${STEAM_DIR}" != "${FLATPAK_STEAM}" ]; then
+    warn "There is ALSO a Flatpak Steam here:"
+    warn "  ${FLATPAK_STEAM}"
+    warn ""
+    warn "This is installing into the native one at"
+    warn "  ${STEAM_DIR}"
+    warn ""
+    warn "If the Steam you actually launch is the Flatpak, none of this will"
+    warn "have any effect: the module gets in by replacing a library beside the"
+    warn "Steam binary, and a Flatpak's libraries belong to its read-only"
+    warn "runtime. Check with Steam open:"
+    warn "    readlink -f /proc/\$(pgrep -x steam | head -1)/exe"
+    warn "and if that path is under .var/app, use a native Steam instead."
+    warn ""
+fi
 say "    Steam at ${STEAM_DIR}"
 
 if pgrep -x steam >/dev/null 2>&1; then
