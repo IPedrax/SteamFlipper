@@ -117,6 +117,8 @@ After installing, Steam has one more tab next to your account name. Hover it for
 
 On the Unlocker tab, a game's purchase box is presented as a 100% discount and the green button installs a manifest. The original price stays struck through on purpose: this is the paid product, obtained another way.
 
+> **Desktop client only.** The tab attaches to the desktop client's navigation bar. Game Mode — the Deck UI, which Steam Deck and handhelds like the ROG Ally boot into, started with `-steamdeck` — has no such bar and shares none of its markup, so no tab appears there. Switch to Desktop Mode to use it. Ownership injection, depot decryption and cloud saves are unaffected and work in both.
+
 The store integration only applies while the Unlocker tab is the open one. The module hands it out as a lease the tab has to keep renewing, so anything that ends the tab (a navigation, a crashed script, closing it) puts the real store back within seconds. The Store tab is never touched.
 
 Turn the whole thing off with `[ui] enabled = false` in `steamflipper.toml`.

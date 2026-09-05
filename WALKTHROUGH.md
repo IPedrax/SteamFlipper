@@ -76,7 +76,9 @@ restyles it too.
 
 ![The LUAFLIPPER tab in Steam's top navigation bar](assets/walkthrough/tab.png)
 
-No tab means the module did not load. Check
+> **Desktop client only.** The tab attaches to the desktop client's navigation bar. Game Mode — the Deck UI, which Steam Deck and handhelds like the ROG Ally boot into, started with `-steamdeck` — has no such bar and shares none of its markup, so no tab appears there. Switch to Desktop Mode to use it. Ownership injection, depot decryption and cloud saves are unaffected and work in both.
+
+No tab in Desktop Mode means the module did not load. Check
 `grep -i steamflipper ~/.local/share/Steam/logs/bootstrap_log.txt` before
 anything else, and check that step 2 actually happened, since installing over
 a running Steam is the common cause.

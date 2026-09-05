@@ -111,10 +111,31 @@
     return { container: wrapper.parentElement, wrapper: wrapper, sample: sample };
   }
 
+  // Counted so the "no nav here" case can be said once, rather than on every
+  // one of the thousands of mutations that re-run this.
+  var navMisses = 0;
+
   function injectTab() {
     if (document.getElementById(TAB_ID)) return true;
     var nav = findNav();
-    if (!nav) return false;
+    if (!nav) {
+      /*
+       * No nav to attach to. Overwhelmingly this is Game Mode: Steam launched
+       * with -steamdeck renders the Deck UI, which has no SuperNavBar and
+       * shares none of its markup, so there is nowhere to put a tab and no
+       * amount of retrying will make one appear.
+       *
+       * Said once, because otherwise the module is indistinguishable from one
+       * that failed to load: it is installed, it is running, and the client
+       * simply has no place for it.
+       */
+      if (++navMisses === 40) {
+        log("no desktop nav found after 40 tries. If this is Game Mode " +
+            "(Steam started with -steamdeck), the LUAFlipper tab only exists " +
+            "in the desktop client — switch to Desktop Mode to use it.");
+      }
+      return false;
+    }
 
     // A structural copy, so the tab picks up whatever markup and classes this
     // build wraps its nav buttons in without us having to know any of them.

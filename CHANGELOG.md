@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.3 — 2026-09-05
+
+- Says so when there is no desktop nav to attach to, instead of retrying silently forever
+- The tab is desktop-client only: Game Mode has no navigation bar to put it in, which is now documented rather than left to be discovered
+- Ownership injection, depot decryption and cloud saves are unaffected and work in Game Mode
+
 ## 1.2.2 — 2026-09-05
 
 - The container build works on SELinux systems (Fedora, Bazzite, Silverblue), where it failed with "Permission denied" on a script that was plainly executable
