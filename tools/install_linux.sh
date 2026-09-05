@@ -227,9 +227,19 @@ fi
 # not gcc-c++, so the checks above passed and CMake then stopped at "No
 # CMAKE_CXX_COMPILER could be found". Testing what the build actually uses is
 # the only way that stays honest.
-if ! probe 'int main(){return 0;}'; then
+# <string> rather than a bare main, because a bare main reads no standard
+# library header at all: it compiles happily on a system with no 32-bit
+# libstdc++ headers whatsoever, and the first thing to actually fail is then
+# whichever later probe includes something. That is not hypothetical -- it sent
+# someone off installing OpenSSL packages for two rounds, because the OpenSSL
+# probe pulls in <cstdlib> and reported the resulting "bits/c++config.h: No
+# such file" as a missing OpenSSL header. A probe has to exercise the thing it
+# claims to be testing.
+if ! probe '#include <string>
+int main(){ std::string s; return s.size(); }'; then
     warn "g++ cannot build 32-bit C++ binaries, which is what this project is."
-    warn "The C compiler working does not imply the C++ one is installed."
+    warn "The C compiler working does not imply the C++ one is usable at -m32,"
+    warn "and 32-bit libstdc++ headers are a separate package from the compiler."
     show_probe_err
     deps_hint
     die  "32-bit C++ toolchain required"

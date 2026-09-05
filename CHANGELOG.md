@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.1.8 — 2026-09-04
+
+- The 32-bit C++ check now compiles something that uses the standard library, so missing libstdc++ headers are reported as that
+- It compiled a bare `int main()` before, which reads no headers at all and passed on systems with no 32-bit C++ headers
+- The failure then surfaced in the OpenSSL check instead, sending people after the wrong package
+
 ## 1.1.7 — 2026-09-04
 
 - Failed prerequisite checks print what the compiler actually said, so a missing package is distinguishable from one that is installed but unusable at 32-bit
