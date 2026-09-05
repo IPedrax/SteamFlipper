@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.7 — 2026-09-05
+
+- Finds every Steam on the machine instead of taking the first one, and installs into a Flatpak Steam if that is the one you use
+- When both a native and a Flatpak Steam exist it lists them with when each was last launched and asks which to use
+- Picks the most recently launched one when there is no terminal to ask; `SF_STEAM_DIR` still overrides everything
+
 ## 1.2.6 — 2026-09-05
 
 - Warns when a Flatpak Steam exists alongside the native one, since installing into the native copy does nothing if the Flatpak is the one you launch

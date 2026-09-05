@@ -50,23 +50,44 @@ warn() { printf '[!] %s\n' "$*" >&2; }
 die()  { printf '[x] %s\n' "$*" >&2; exit 1; }
 
 # --- locate Steam ------------------------------------------------------------
-find_steam() {
+FLATPAK_STEAM="${HOME}/.var/app/com.valvesoftware.Steam/.local/share/Steam"
+
+# Every Steam on this machine, deduplicated. ~/.steam/steam is usually a symlink
+# to the native one, so paths are resolved before dropping duplicates -- a list
+# that offered the same install twice under two names would be a worse question
+# than no question.
+steam_candidates() {
+    local d r
     for d in "${SF_STEAM_DIR:-}" "${HOME}/.local/share/Steam" \
-             "${HOME}/.steam/steam" "${HOME}/.steam/root"; do
-        [ -n "${d}" ] && [ -d "${d}/ubuntu12_32" ] && { echo "${d}"; return; }
-    done
-    return 1
+             "${HOME}/.steam/steam" "${HOME}/.steam/root" "${FLATPAK_STEAM}"; do
+        [ -n "${d}" ] || continue
+        [ -d "${d}/ubuntu12_32" ] || continue
+        r="$(cd "${d}" 2>/dev/null && pwd -P)" || continue
+        printf '%s\n' "${r}"
+    done | awk '!seen[$0]++'
 }
 
-# Steam installed as a Flatpak, which this does not support: the module gets in
-# by replacing a library beside the Steam binary, and inside a Flatpak that
-# library belongs to the runtime rather than to the user. Worth finding anyway,
-# so the failure says what is wrong instead of "no Steam install found".
-FLATPAK_STEAM="${HOME}/.var/app/com.valvesoftware.Steam/.local/share/Steam"
-find_flatpak_steam() {
-    [ -d "${FLATPAK_STEAM}/ubuntu12_32" ] && { echo "${FLATPAK_STEAM}"; return; }
-    return 1
+# When did this install last run? bootstrap_log.txt is rewritten on every
+# launch, so it answers "which of these do you actually use" without needing
+# Steam to be running -- which it must not be while installing.
+steam_last_used() {
+    local log="$1/logs/bootstrap_log.txt"
+    [ -f "${log}" ] && stat -c %Y "${log}" 2>/dev/null || echo 0
 }
+
+steam_kind() {
+    case "$1" in
+        *"/.var/app/com.valvesoftware.Steam/"*) echo "Flatpak" ;;
+        *) echo "native" ;;
+    esac
+}
+
+find_steam() {
+    steam_candidates | head -1
+    return 0
+}
+
+
 
 # --- uninstall ---------------------------------------------------------------
 uninstall() {
@@ -410,41 +431,65 @@ else
     die "this machine cannot build a 32-bit module"
 fi
 
-if ! STEAM_DIR="$(find_steam)"; then
-    if find_flatpak_steam >/dev/null; then
-        warn "Found Steam installed as a Flatpak:"
-        warn "  ${FLATPAK_STEAM}"
-        warn ""
-        warn "That is not supported. SteamFlipper gets into the client by replacing"
-        warn "a library next to the Steam binary, and in a Flatpak that library"
-        warn "belongs to the read-only runtime. Install Steam natively -- on an"
-        warn "atomic image, the native package or the one your image already ships"
-        warn "in game mode -- and run this again."
-        die  "Flatpak Steam is not supported"
-    fi
+# --- which Steam ------------------------------------------------------------
+#
+# There can be more than one. An image that ships Steam as a Flatpak often
+# leaves a native directory behind from an earlier install, and then picking
+# the first one found means installing perfectly into a client nobody launches
+# -- which looks exactly like a broken install and took several rounds to
+# recognise as anything else.
+#
+# So: find them all, and when there is a choice, let it be made rather than
+# guessed. bootstrap_log.txt is rewritten on every launch, so its timestamp
+# says which one is actually in use.
+mapfile -t STEAM_FOUND < <(steam_candidates)
+
+if [ "${#STEAM_FOUND[@]}" -eq 0 ]; then
     die "no Steam install found (looked for ubuntu12_32/); set SF_STEAM_DIR"
+elif [ "${#STEAM_FOUND[@]}" -eq 1 ] || [ -n "${SF_STEAM_DIR:-}" ]; then
+    STEAM_DIR="${STEAM_FOUND[0]}"
+else
+    # Most recently launched first, so the default is the one being used.
+    newest=""; newest_at=0
+    for d in "${STEAM_FOUND[@]}"; do
+        at="$(steam_last_used "${d}")"
+        [ "${at}" -gt "${newest_at}" ] && { newest_at="${at}"; newest="${d}"; }
+    done
+    [ -n "${newest}" ] || newest="${STEAM_FOUND[0]}"
+
+    warn "More than one Steam is installed here:"
+    i=1
+    for d in "${STEAM_FOUND[@]}"; do
+        at="$(steam_last_used "${d}")"
+        when="never launched"
+        [ "${at}" -gt 0 ] && when="last used $(date -d "@${at}" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+        mark=" "; [ "${d}" = "${newest}" ] && mark="*"
+        warn "  ${mark}${i}) $(steam_kind "${d}")  ${d}"
+        warn "        ${when}"
+        i=$((i + 1))
+    done
+    warn "  (* is the one launched most recently)"
+
+    if [ -t 0 ]; then
+        printf 'Install into which? [1-%d, default %s]: ' \
+               "${#STEAM_FOUND[@]}" "$(( $(printf '%s\n' "${STEAM_FOUND[@]}" | grep -nxF "${newest}" | cut -d: -f1) ))" >&2
+        read -r choice
+        if [ -z "${choice}" ]; then
+            STEAM_DIR="${newest}"
+        elif [ "${choice}" -ge 1 ] 2>/dev/null && [ "${choice}" -le "${#STEAM_FOUND[@]}" ]; then
+            STEAM_DIR="${STEAM_FOUND[$((choice - 1))]}"
+        else
+            die "'${choice}' is not one of the options"
+        fi
+    else
+        # Piped or scripted: take the one in use and say so, rather than
+        # blocking forever on a prompt nobody can answer.
+        STEAM_DIR="${newest}"
+        warn "Not a terminal, so taking the most recently used one."
+        warn "Set SF_STEAM_DIR to choose explicitly."
+    fi
 fi
 
-# Both can exist at once, and then installing into the native one is a no-op:
-# an image that ships Steam as a Flatpak leaves the native directory behind
-# from an earlier install, so everything here succeeds and the client that
-# actually runs never sees any of it. That is indistinguishable from a broken
-# install unless it is said out loud.
-if find_flatpak_steam >/dev/null && [ "${STEAM_DIR}" != "${FLATPAK_STEAM}" ]; then
-    warn "There is ALSO a Flatpak Steam here:"
-    warn "  ${FLATPAK_STEAM}"
-    warn ""
-    warn "This is installing into the native one at"
-    warn "  ${STEAM_DIR}"
-    warn ""
-    warn "If the Steam you actually launch is the Flatpak, none of this will"
-    warn "have any effect: the module gets in by replacing a library beside the"
-    warn "Steam binary, and a Flatpak's libraries belong to its read-only"
-    warn "runtime. Check with Steam open:"
-    warn "    readlink -f /proc/\$(pgrep -x steam | head -1)/exe"
-    warn "and if that path is under .var/app, use a native Steam instead."
-    warn ""
-fi
 say "    Steam at ${STEAM_DIR}"
 
 if pgrep -x steam >/dev/null 2>&1; then

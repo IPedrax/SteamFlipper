@@ -86,6 +86,18 @@ It does this automatically when the host toolchain is missing or broken and `pod
 
 Only the repository is mounted into the container, and the tree is handed back to you afterwards, including when the build fails.
 
+**More than one Steam?** Images that ship Steam as a Flatpak often leave a native `~/.local/share/Steam` behind, and installing into the wrong one succeeds while doing nothing. The installer finds every Steam, shows when each was last launched, and asks:
+
+```
+[!] More than one Steam is installed here:
+[!]    1) native   /home/you/.local/share/Steam
+[!]         last used 2026-09-01 11:20
+[!]   *2) Flatpak  /home/you/.var/app/com.valvesoftware.Steam/.local/share/Steam
+[!]         last used 2026-09-05 20:30
+```
+
+The one marked `*` is the one you actually launch. With no terminal to ask, it takes that one; `SF_STEAM_DIR=/path/to/Steam` overrides everything.
+
 ### <img src="assets/icons/layers.svg" width="17" align="absmiddle" alt="" /> Options
 
 | Command | What it does |
