@@ -582,13 +582,30 @@ fi
 # here on every launch and a reinstall is enough to pick up UI changes.
 say "Installing client UI"
 mkdir -p "${STEAM_DIR}/steamflipper/ui"
-for f in luaflipper.js luaflipper.pages.js luaflipper.store.js luaflipper.popup.js luaflipper.css; do
-    if [ -f "${REPO_ROOT}/plugin/luaflipper/public/${f}" ]; then
-        install -Dm644 "${REPO_ROOT}/plugin/luaflipper/public/${f}" \
-                       "${STEAM_DIR}/steamflipper/ui/${f}"
-    else
-        warn "    missing ${f}; the UI may not load"
-    fi
+
+# Everything in public/, not a list. The list was hardcoded and
+# luaflipper.workshop.js was never added to it, so the Workshop tab shipped in
+# 1.1.0 and installed for nobody -- it worked here only because it was being
+# copied by hand during development. A directory cannot be forgotten the way a
+# list can.
+UI_SRC="${REPO_ROOT}/plugin/luaflipper/public"
+ui_count=0
+for f in "${UI_SRC}"/luaflipper.*; do
+    [ -f "${f}" ] || continue
+    install -Dm644 "${f}" "${STEAM_DIR}/steamflipper/ui/$(basename "${f}")"
+    ui_count=$((ui_count + 1))
+done
+[ "${ui_count}" -gt 0 ] || die "no UI assets found in ${UI_SRC}"
+say "    ${ui_count} UI files"
+
+# Anything left from an older install that the current one no longer ships
+# would be loaded too, since the module reads the directory.
+for f in "${STEAM_DIR}/steamflipper/ui"/luaflipper.*; do
+    [ -f "${f}" ] || continue
+    [ -f "${UI_SRC}/$(basename "${f}")" ] || {
+        rm -f "${f}"
+        say "    removed stale $(basename "${f}")"
+    }
 done
 
 # Steam only opens the CEF debugger, the sole channel into the frontend, when

@@ -7,6 +7,11 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.4 — 2026-09-05
+
+- The Workshop tab actually installs. Its script was added in 1.1.0 but never added to the installer's file list, so no released version has ever shipped it
+- The installer copies every UI asset now instead of a hardcoded list, and clears stale ones a newer version no longer ships
+
 ## 1.2.3 — 2026-09-05
 
 - Says so when there is no desktop nav to attach to, instead of retrying silently forever
