@@ -10,7 +10,8 @@ beneath it, each short enough to read in a settings panel.
 ## 1.2.5 — 2026-09-05
 
 - The installer verifies its own work and says which piece is wrong, instead of reporting success and leaving you to find out nothing happened
-- Checks the bootstrap is ours (Steam replaces it during client updates, which silently un-installs the module), the module resolves its libraries, and every UI asset is present
+- Checks the bootstrap is ours, since Steam replaces it during client updates and that silently un-installs the module
+- Also checks the module resolves its libraries, and that every UI asset is present
 - A reinstall repairs all three, so re-running is the fix for anything that stopped working after a Steam update
 
 ## 1.2.4 — 2026-09-05
