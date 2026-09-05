@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.5 — 2026-09-05
+
+- The installer verifies its own work and says which piece is wrong, instead of reporting success and leaving you to find out nothing happened
+- Checks the bootstrap is ours (Steam replaces it during client updates, which silently un-installs the module), the module resolves its libraries, and every UI asset is present
+- A reinstall repairs all three, so re-running is the fix for anything that stopped working after a Steam update
+
 ## 1.2.4 — 2026-09-05
 
 - The Workshop tab actually installs. Its script was added in 1.1.0 but never added to the installer's file list, so no released version has ever shipped it

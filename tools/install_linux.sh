@@ -625,6 +625,66 @@ say "Syncing depot decryption keys into config.vdf"
 "${REPO_ROOT}/tools/sync_depot_keys.py" --steam "${STEAM_DIR}" 2>&1 | sed 's/^/    /' || \
     warn "    depot key sync failed; downloaded content may not decrypt"
 
+# --- verify what was just installed -----------------------------------------
+#
+# "It says it installed but nothing happens" has been the shape of every report
+# so far, and each time the answer was visible on disk the whole time: a
+# bootstrap Steam had replaced during an update, a UI file the installer never
+# copied, a module the loader would refuse. None of that is hard to check, and
+# checking it here turns a silent nothing into a line that says which piece is
+# wrong while the user is still looking at the terminal.
+say "Verifying"
+VERIFY_OK=1
+
+# 1. The bootstrap Steam actually loads. Steam replaces this file during client
+#    updates, which un-installs the module without touching anything else, and
+#    is the single most likely reason a working install stops working.
+if grep -qaE "${MARKER_RE}" "${XTST}" 2>/dev/null; then
+    say "    bootstrap in place"
+else
+    warn "    the bootstrap at ${XTST}"
+    warn "    is not ours. Steam replaces it during client updates; re-running"
+    warn "    this installer puts it back."
+    VERIFY_OK=0
+fi
+
+# 2. The module the bootstrap will try to dlopen. An unresolved dependency
+#    makes the loader skip it silently, which looks identical to not being
+#    installed at all.
+if [ -f "${LIBDIR}/32/SteamFlipper.so" ]; then
+    if command -v ldd >/dev/null 2>&1; then
+        MISSING_LIBS="$(ldd "${LIBDIR}/32/SteamFlipper.so" 2>/dev/null | grep "not found" || true)"
+        if [ -n "${MISSING_LIBS}" ]; then
+            warn "    the module has unresolved libraries, so Steam will skip it:"
+            printf '%s\n' "${MISSING_LIBS}" | sed 's/^/      /' >&2
+            VERIFY_OK=0
+        else
+            say "    module resolves its libraries"
+        fi
+    fi
+else
+    warn "    no module at ${LIBDIR}/32/SteamFlipper.so"
+    VERIFY_OK=0
+fi
+
+# 3. The UI assets, counted rather than assumed. A missing one is how the
+#    Workshop tab shipped to nobody for four releases.
+UI_HAVE="$(ls "${STEAM_DIR}/steamflipper/ui"/luaflipper.* 2>/dev/null | wc -l)"
+UI_WANT="$(ls "${REPO_ROOT}/plugin/luaflipper/public"/luaflipper.* 2>/dev/null | wc -l)"
+if [ "${UI_HAVE}" -eq "${UI_WANT}" ] && [ "${UI_HAVE}" -gt 0 ]; then
+    say "    ${UI_HAVE} UI assets installed"
+else
+    warn "    ${UI_HAVE} of ${UI_WANT} UI assets installed"
+    VERIFY_OK=0
+fi
+
+if [ "${VERIFY_OK}" -eq 0 ]; then
+    warn ""
+    warn "Something above is wrong, so the tab will not appear. Re-running this"
+    warn "installer fixes all of it; if it does not, the lines above say which"
+    warn "piece to report."
+fi
+
 if [ "${PATTERNS_OK}" -eq 0 ]; then
     cat >&2 <<EOF
 
