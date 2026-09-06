@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.8 — 2026-09-06
+
+- The container build no longer leaves the checkout owned by something you cannot write, which made git refuse it and blocked every later update
+- Rootless podman already maps container-root to you; chowning on top of that pushed ownership into the subuid range
+- The installer now warns when git refuses the checkout, and gives the one command that fixes it
+
 ## 1.2.7 — 2026-09-05
 
 - Finds every Steam on the machine instead of taking the first one, and installs into a Flatpak Steam if that is the one you use

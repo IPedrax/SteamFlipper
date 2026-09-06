@@ -258,12 +258,28 @@ build_in_container() {
     #
     # bash ./tools/... rather than ./tools/..., so the build does not depend on
     # an executable bit surviving however the source arrived.
+    # Whether to hand ownership back depends entirely on the engine, and
+    # getting it backwards is worse than not doing it.
+    #
+    # Rootless podman already maps container-root to the invoking user, so
+    # files come out owned correctly. Chowning them to the host uid from
+    # inside that container maps it through the subuid range instead and
+    # leaves the tree owned by something like 100999 -- which the user cannot
+    # write, and which makes git refuse the repository entirely with "detected
+    # dubious ownership". That broke every subsequent git pull for the first
+    # person to use this, so they stayed on the version that put them there.
+    #
+    # Docker's root is real root, so there the chown is required.
+    local hand_back=1
+    case "${engine##*/}" in podman) hand_back=0 ;; esac
+
     "${engine}" run --rm \
         -v "${REPO_ROOT}:/src:z" \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+        -e SF_HAND_BACK="${hand_back}" \
         -e SF_BUILD_TYPE="${BUILD_TYPE}" \
         -w /src "${CONTAINER_IMAGE}" bash -uc '
-            trap "chown -R \"${HOST_UID}:${HOST_GID}\" /src 2>/dev/null || true" EXIT
+            trap "[ \"${SF_HAND_BACK}\" = 1 ] && chown -R \"${HOST_UID}:${HOST_GID}\" /src 2>/dev/null; true" EXIT
             export DEBIAN_FRONTEND=noninteractive
             dpkg --add-architecture i386
             apt-get update -qq
@@ -429,6 +445,20 @@ else
     warn "toolchain here at all."
     deps_hint
     die "this machine cannot build a 32-bit module"
+fi
+
+# A tree git will not touch cannot be updated, and an installer that carries on
+# regardless leaves someone pinned to the version that broke it -- which is
+# exactly what happened when a rootless-podman build left this tree owned by a
+# subuid. Cheap to spot, and the fix is one command.
+if command -v git >/dev/null 2>&1 && [ -d "${REPO_ROOT}/.git" ]; then
+    if ! git -C "${REPO_ROOT}" rev-parse --git-dir >/dev/null 2>&1; then
+        warn "git refuses this checkout, so it cannot be updated:"
+        warn "  ${REPO_ROOT}"
+        warn "Almost always ownership. Fix it with:"
+        warn "  sudo chown -R \"$(id -un):$(id -gn)\" \"${REPO_ROOT}\""
+        warn "then re-run this installer."
+    fi
 fi
 
 # --- which Steam ------------------------------------------------------------
