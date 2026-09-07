@@ -10,7 +10,8 @@ beneath it, each short enough to read in a settings panel.
 ## 1.2.9 — 2026-09-07
 
 - The module carries its own libstdc++ instead of resolving one at load time
-- Steam's runtime ships libstdc++ from GCC 5, and where that copy wins over the host's the module silently failed to load: bootstrap mapped, module absent, nothing in any log
+- Steam's runtime ships libstdc++ from GCC 5, and where that copy wins over the host's the module silently failed to load
+- The bootstrap was mapped, the module absent, and nothing in any log said so
 - That is why an install could verify perfectly and still do nothing on one machine while working on another
 
 ## 1.2.8 — 2026-09-06
