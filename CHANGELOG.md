@@ -7,6 +7,12 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.2.9 — 2026-09-07
+
+- The module carries its own libstdc++ instead of resolving one at load time
+- Steam's runtime ships libstdc++ from GCC 5, and where that copy wins over the host's the module silently failed to load: bootstrap mapped, module absent, nothing in any log
+- That is why an install could verify perfectly and still do nothing on one machine while working on another
+
 ## 1.2.8 — 2026-09-06
 
 - The container build no longer leaves the checkout owned by something you cannot write, which made git refuse it and blocked every later update

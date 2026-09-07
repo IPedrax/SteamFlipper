@@ -228,6 +228,19 @@ if(NOT WIN32)
         VISIBILITY_INLINES_HIDDEN ON
     )
     target_link_options(SteamFlipper PRIVATE "LINKER:--exclude-libs,ALL")
+
+    # Carry our own libstdc++ and libgcc rather than resolving them at load
+    # time. The module is dlopened into the Steam client, which runs with the
+    # steam-runtime ahead of the host on LD_LIBRARY_PATH, and that runtime
+    # ships libstdc++ 3.4.21 -- from GCC 5. Anything built with a modern
+    # compiler wants GLIBCXX_3.4.32 or later, so on a machine where the runtime
+    # copy wins the dlopen simply fails and the module never loads: bootstrap
+    # mapped, no module, nothing in any log Steam keeps.
+    #
+    # Whether the runtime or the host wins varies by distribution, which is why
+    # this worked on one machine and not another for the same build. Linking
+    # statically removes the question.
+    target_link_options(SteamFlipper PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
 # Header search path — per-config include directory
