@@ -241,6 +241,20 @@ if(NOT WIN32)
     # this worked on one machine and not another for the same build. Linking
     # statically removes the question.
     target_link_options(SteamFlipper PRIVATE -static-libstdc++ -static-libgcc)
+
+    # Never ask for an executable stack. One assembly object without a
+    # .note.GNU-stack marker is enough to mark the whole library RWE, and a
+    # hardened kernel -- Fedora, Bazzite, SELinux systems generally -- then
+    # refuses to load it outright:
+    #
+    #   cannot enable executable stack as shared object requires: Invalid argument
+    #
+    # The bootstrap reports that and Steam files the message where nobody
+    # looks, so the symptom is a module that simply never appears. Recent
+    # binutils default to noexecstack and older ones do not, which is exactly
+    # why a container-built module failed on a machine where a natively built
+    # one worked. Stating it removes the difference.
+    target_link_options(SteamFlipper PRIVATE "LINKER:-z,noexecstack")
 endif()
 
 # Header search path — per-config include directory

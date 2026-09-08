@@ -763,7 +763,22 @@ else
     VERIFY_OK=0
 fi
 
-# 3. The UI assets, counted rather than assumed. A missing one is how the
+# 3. An executable stack, which a hardened kernel refuses outright:
+#    "cannot enable executable stack as shared object requires". One assembly
+#    object without a .note.GNU-stack marker causes it, older binutils do not
+#    default it away, and the failure lands in a Steam log nobody reads. It is
+#    two lines to check and it cost four days not to.
+if command -v readelf >/dev/null 2>&1 && [ -f "${LIBDIR}/32/SteamFlipper.so" ]; then
+    if readelf -lW "${LIBDIR}/32/SteamFlipper.so" 2>/dev/null | grep GNU_STACK | grep -q "RWE"; then
+        warn "    the module wants an executable stack, which this kernel will"
+        warn "    refuse. Rebuild with a current SteamFlipper: ./tools/install_linux.sh"
+        VERIFY_OK=0
+    else
+        say "    stack is non-executable"
+    fi
+fi
+
+# 4. The UI assets, counted rather than assumed. A missing one is how the
 #    Workshop tab shipped to nobody for four releases.
 UI_HAVE="$(ls "${STEAM_DIR}/steamflipper/ui"/luaflipper.* 2>/dev/null | wc -l)"
 UI_WANT="$(ls "${REPO_ROOT}/plugin/luaflipper/public"/luaflipper.* 2>/dev/null | wc -l)"

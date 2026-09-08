@@ -33,7 +33,27 @@
     })
 
 #define LOG_INFO(fmt, ...) fprintf(stdout, "%s " COLOR_INFO "BOOTSTRAP-INFO " COLOR_RESET fmt "\n", GET_TIMESTAMP(), ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) fprintf(stderr, "%s " COLOR_ERROR "BOOTSTRAP-ERROR " COLOR_RESET fmt "\n", GET_TIMESTAMP(), ##__VA_ARGS__)
+/*
+ * Errors go to a file as well as stderr.
+ *
+ * Steam runs the client under its own logger, so stderr never reaches a
+ * terminal: it is filed into logs/console-linux.txt among everything else the
+ * client says. The one line that explains why the module did not load -- a
+ * failed dlopen and its reason -- was therefore invisible unless you already
+ * knew where to look, and diagnosing without it took four days and ten
+ * releases that fixed other things.
+ */
+#define SF_BOOTSTRAP_LOG "/tmp/steamflipper-bootstrap.log"
+#define LOG_ERROR(fmt, ...)                                                                   \
+    do {                                                                                      \
+        fprintf(stderr, "%s " COLOR_ERROR "BOOTSTRAP-ERROR " COLOR_RESET fmt "\n",            \
+                GET_TIMESTAMP(), ##__VA_ARGS__);                                              \
+        FILE* sf_lf = fopen(SF_BOOTSTRAP_LOG, "a");                                           \
+        if (sf_lf) {                                                                          \
+            fprintf(sf_lf, "%s BOOTSTRAP-ERROR " fmt "\n", GET_TIMESTAMP(), ##__VA_ARGS__);   \
+            fclose(sf_lf);                                                                    \
+        }                                                                                     \
+    } while (0)
 #define LOG_WARN(fmt, ...) fprintf(stderr, "%s " COLOR_WARN "BOOTSTRAP-WARN " COLOR_RESET fmt "\n", GET_TIMESTAMP(), ##__VA_ARGS__)
 
 #define HOOK_FUNC(handle, name, ret_type, params, args)                                                                                                                            \

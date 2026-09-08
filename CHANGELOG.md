@@ -7,6 +7,13 @@ entry: the version you are on, or the one an update would bring. So the format
 is load-bearing: a `## <version> — <date>` heading per release, `-` bullets
 beneath it, each short enough to read in a settings panel.
 
+## 1.3.0 — 2026-09-07
+
+- Fixes the module being refused outright on Fedora, Bazzite and other hardened kernels
+- It asked for an executable stack, which those kernels deny, so it never loaded at all
+- Older toolchains do not default that away, so a container-built module failed where a native one worked
+- The installer checks for it, and the bootstrap now writes its errors to `/tmp/steamflipper-bootstrap.log`
+
 ## 1.2.9 — 2026-09-07
 
 - The module carries its own libstdc++ instead of resolving one at load time
