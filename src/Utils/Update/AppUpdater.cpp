@@ -369,16 +369,24 @@ std::string SelfPath()
     return {};
 }
 
-bool LaunchAutoUpdate(const std::string& stateDir)
+/*
+ * Start one of the repo's detached helpers.
+ *
+ * Both callers need the identical treatment: the same three arguments, the same
+ * scrubbed environment, and the same detachment. They differ only in which
+ * script runs, so the difference is the argument and nothing else is duplicated.
+ */
+static bool LaunchHelper(const char* script, const std::string& stateDir,
+                         const char* what, const std::string& extra = {})
 {
     const std::string repo = Config::GetUpdateRepo();
     if (repo.empty()) {
-        LOG_WARN("AppUpdater: no repo configured, cannot auto-update");
+        LOG_WARN("AppUpdater: no repo configured, cannot run {}", what);
         return false;
     }
 
     const std::filesystem::path helper =
-        std::filesystem::path(repo) / "tools" / "auto_update.sh";
+        std::filesystem::path(repo) / "tools" / script;
     std::error_code ec;
     if (!std::filesystem::exists(helper, ec)) {
         LOG_WARN("AppUpdater: {} is missing", helper.string());
@@ -388,7 +396,7 @@ bool LaunchAutoUpdate(const std::string& stateDir)
     const std::filesystem::path steam =
         SFPlatform::DynamicLibrary::GetMainExecutablePath();
     if (steam.empty()) {
-        LOG_WARN("AppUpdater: steam binary path unknown; cannot auto-update");
+        LOG_WARN("AppUpdater: steam binary path unknown; cannot run {}", what);
         return false;
     }
 
@@ -409,14 +417,36 @@ bool LaunchAutoUpdate(const std::string& stateDir)
     const std::string cmd =
         "env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT PATH='" + path + "' " +
         ShellQuote(helper.string()) + " " + ShellQuote(repo) + " " +
-        ShellQuote(stateDir) + " " + ShellQuote(steam.string());
+        ShellQuote(stateDir) + " " + ShellQuote(steam.string()) +
+        (extra.empty() ? "" : " " + ShellQuote(extra));
 
     if (!SFPlatform::Process::LaunchDetachedHidden(cmd)) {
-        LOG_WARN("AppUpdater: auto-update helper failed to launch");
+        LOG_WARN("AppUpdater: {} helper failed to launch", what);
         return false;
     }
-    LOG_INFO("AppUpdater: auto-update helper launched, Steam will close");
+    LOG_INFO("AppUpdater: {} helper launched, Steam will close", what);
     return true;
+}
+
+bool LaunchAutoUpdate(const std::string& stateDir)
+{
+    return LaunchHelper("auto_update.sh", stateDir, "auto-update");
+}
+
+/*
+ * Write the Lua manifests' depot keys into config.vdf.
+ *
+ * Steam rewrites that file on exit and would discard anything put there
+ * underneath it, so the keys can only be written while it is closed. That is
+ * the whole reason this is a detached helper and not a few lines here: the
+ * client has to go down and come back, exactly as it does for an update.
+ */
+bool LaunchKeySync(const std::string& stateDir, const std::string& steamDir)
+{
+    // The Steam directory is passed rather than guessed: sync_depot_keys.py
+    // falls back to searching three well-known paths, and a Flatpak Steam is
+    // under none of them. This process already knows which one is real.
+    return LaunchHelper("sync_keys.sh", stateDir, "depot-key sync", steamDir);
 }
 
 LastUpdate ReadLastUpdate(const std::string& stateDir)

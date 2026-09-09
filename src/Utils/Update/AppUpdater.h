@@ -112,6 +112,13 @@ namespace AppUpdater {
     // Call only after PullSource() succeeded. It does not check.
     bool LaunchAutoUpdate(const std::string& stateDir);
 
+    // The same handoff for depot keys: close Steam, copy the keys out of the
+    // Lua manifests into config.vdf, start Steam again. Separate from the
+    // update because it pulls nothing and builds nothing, and because a user
+    // who just added a manifest needs it without waiting for a release.
+    // Reports through the same <state>/update-status file.
+    bool LaunchKeySync(const std::string& stateDir, const std::string& steamDir);
+
     struct LastUpdate {
         std::string state;    // "ok", "failed", "running", or "" if never run
         std::string when;     // local time the helper finished

@@ -144,19 +144,41 @@ namespace {
         return true;
     }
 
-    static void ShowMissingPopup(const std::string& sha256)
+    // What the last Load() concluded, for /api/status to report.
+    std::string g_status = "not loaded";
+
+    /*
+     * Deliberately a log line and a status row, not a dialog.
+     *
+     * Every Steam client update changes steamclient.so, and the spec is keyed
+     * to its exact hash, so there is always a window where no spec exists yet.
+     * That window is normal, it closes on its own when upstream publishes, and
+     * nothing the user does shortens it. A modal in front of the client says
+     * "something is broken, act now" about a condition that is expected,
+     * self-healing and already handled: IPC interception turns off, and the
+     * pattern hooks that do the ownership and depot work carry on.
+     *
+     * It is still worth saying somewhere, because it is not nothing. Encrypted
+     * app tickets are what goes missing, and a game that wants one will fail in
+     * a way that looks unrelated unless this is on record.
+     */
+    static void NoteMissing(const RemoteToml::Result& r, const char* why)
     {
-        SteamDiagnostics::ShowWarning(
-            "SteamFlipper - IPC spec missing",
-            "SteamFlipper: IPC spec file not found.\n\n"
-            "IPC interception is disabled for this session; pattern-based "
-            "hooks are unaffected.\n\n"
-            "You can:\n"
-            "  1. Wait for the next upstream publish and restart Steam.\n"
-            "  2. Drop a matching TOML at:\n"
-            "       <Steam>" + std::string(kSep) + "steamflipper" + kSep + "ipc" + kSep + "steamclient" + kSep + sha256 + ".toml\n"
-            "  3. Check upstream:\n"
-            "       https://github.com/OpenSteam001/steam-monitor/tree/ipc/steamclient");
+        const std::string sha = r.sha256.empty() ? "(hash failed)" : r.sha256;
+        if (r.reached) {
+            g_status = "no spec published for this Steam build yet";
+            LOG_WARN("IPCLoader: {} for steamclient {} (mirrors answered {}). "
+                     "IPC interception is off this session; pattern hooks are "
+                     "unaffected. Upstream: "
+                     "https://github.com/OpenSteam001/steam-monitor/tree/ipc/steamclient",
+                     why, sha, r.status);
+        } else {
+            g_status = "could not reach the spec mirrors";
+            LOG_WARN("IPCLoader: {} for steamclient {}: no mirror could be "
+                     "reached, so whether a spec exists is unknown. IPC "
+                     "interception is off this session; pattern hooks are "
+                     "unaffected.", why, sha);
+        }
     }
 
 } // namespace
@@ -174,7 +196,7 @@ bool Load(const std::string& steamclientPath)
     });
 
     if (!r.ok) {
-        ShowMissingPopup(r.sha256.empty() ? "(hash failed)" : r.sha256);
+        NoteMissing(r, "no IPC spec");
         return false;
     }
 
@@ -183,7 +205,7 @@ bool Load(const std::string& steamclientPath)
         root = toml::parse(r.body);
     } catch (const toml::parse_error& e) {
         LOG_WARN("IPCLoader: TOML parse error: {}", e.description());
-        ShowMissingPopup(r.sha256);
+        NoteMissing(r, "unreadable IPC spec");
         return false;
     }
 
@@ -195,10 +217,17 @@ bool Load(const std::string& steamclientPath)
         g_registry.Add(std::move(iface));
     }
 
+    g_status = std::to_string(MethodCount()) + " methods, " +
+               (r.fromCache ? "from cache" : "from upstream");
     LOG_INFO("IPCLoader: loaded {} methods across {} interfaces ({})",
              MethodCount(), InterfaceCount(),
              r.fromCache ? "cache fallback" : "remote");
     return true;
+}
+
+std::string Status()
+{
+    return g_status;
 }
 
 const Method* Find(EIPCInterface interfaceID, uint32_t funcHash)

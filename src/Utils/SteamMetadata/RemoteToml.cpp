@@ -123,6 +123,14 @@ Result Fetch(const Request& request)
         http = SFPlatform::Http::Execute(L"GET", lastUrl.c_str(),
                                           nullptr, 0, nullptr);
 
+        // Recorded per mirror, not just from the last one: one reachable
+        // mirror is enough to know the network is fine and the file is simply
+        // not there.
+        if (http.ok) {
+            out.reached = true;
+            out.status  = http.status;
+        }
+
         if (http.ok && http.status == 200) break;
 
         // Mirrors are independent repos with possibly different coverage, so a 404

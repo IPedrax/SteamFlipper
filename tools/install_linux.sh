@@ -830,7 +830,11 @@ SteamFlipper is installed.
   then re-run tools/sync_depot_keys.py (Steam closed) so their
   depot keys reach config.vdf.
 
-  Logs: ${STEAM_DIR}/ubuntu12_32/steamflipper/main.log
+  Is it working? With Steam open:
+    curl -s http://127.0.0.1:1987/api/status
+  The "UI injected" row is the answer. This build has no log file:
+  logging is compiled out of Release, so rebuild with
+  SF_BUILD_TYPE=Debug to get one.
 ==========================================
 EOF
 

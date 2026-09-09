@@ -115,6 +115,24 @@
   // one of the thousands of mutations that re-run this.
   var navMisses = 0;
 
+  /**
+   * Tell the module where the tab ended up.
+   *
+   * Sent once per state and never retried: this is diagnostic, so failing to
+   * deliver it must cost nothing. The module holds the last value for
+   * /api/status, which is the only place someone helping a user from a
+   * distance can read it.
+   */
+  var navSaid = "";
+  function reportNav(state) {
+    if (navSaid === state) return;
+    navSaid = state;
+    if (typeof fetch !== "function") return;
+    try {
+      fetch(API + "uistate?nav=" + encodeURIComponent(state)).catch(function () {});
+    } catch (e) {}
+  }
+
   function injectTab() {
     if (document.getElementById(TAB_ID)) return true;
     var nav = findNav();
@@ -132,7 +150,13 @@
       if (++navMisses === 40) {
         log("no desktop nav found after 40 tries. If this is Game Mode " +
             "(Steam started with -steamdeck), the LUAFlipper tab only exists " +
-            "in the desktop client — switch to Desktop Mode to use it.");
+            "in the desktop client, so switch to Desktop Mode to use it.");
+        // Told to the module as well as the console, because the console is
+        // not somewhere anybody looks. This is the one fact that separates
+        // "installed and running, no place to draw" from "did not load", and
+        // without it on /api/status the two are indistinguishable from
+        // outside.
+        reportNav("none");
       }
       return false;
     }
@@ -188,6 +212,7 @@
     if (currentPage) takeHighlight();
 
     log("nav tab injected");
+    reportNav("ok");
     return true;
   }
 

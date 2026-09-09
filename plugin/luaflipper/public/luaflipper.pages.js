@@ -1526,6 +1526,69 @@
     return { node: box, hero: hero, show: show };
   }
 
+  /**
+   * The depot-key gap, and the one button that closes it.
+   *
+   * Adding a manifest registers ownership live but cannot deliver the depot
+   * key. Steam reads keys from config.vdf and rewrites that file when it
+   * exits, so anything written underneath a running client is discarded on the
+   * way out. The work therefore costs a restart, and that is why this is a
+   * button somebody presses rather than something done quietly for them: the
+   * client is about to disappear, and nobody should be surprised by that.
+   *
+   * The button is the store's green because it is the affirmative action on
+   * the page, matching Install on an app row.
+   */
+  function keySyncRow(el, pending) {
+    var box = style(el("div"), {
+      display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap",
+      padding: "12px 14px", marginBottom: "18px", borderRadius: "3px",
+      background: INSET, boxShadow: "inset 3px 0 0 #c15b5b"
+    });
+
+    var words = style(el("div"), { flex: "1 1 320px" });
+    words.appendChild(el("div", null,
+      plural(pending, "depot key") + " missing from Steam's config."));
+    words.appendChild(el("div", "luaflipper-sub",
+      "Downloads for those depots stop with “content still encrypted”. " +
+      "Writing them needs Steam closed, so this closes it and starts it again."));
+    box.appendChild(words);
+
+    var LABEL_IDLE = "Write keys and restart Steam";
+    var btn = storeBtn(el, LABEL_IDLE, GREEN, GREEN_HOT);
+    box.appendChild(btn);
+
+    // storeBtn is a div, so there is no disabled attribute to set: a flag is
+    // what stops a second click starting a second helper.
+    var busy = false;
+    btn.addEventListener("click", function () {
+      if (busy) return;
+      busy = true;
+      btn.textContent = "Working";
+
+      function failed(msg) {
+        busy = false;
+        btn.textContent = LABEL_IDLE;
+        words.appendChild(el("div", "luaflipper-error", msg));
+      }
+
+      fetch(API + "keys/sync")
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res || res.error) {
+            failed((res && text(res.error)) || "the helper did not answer");
+            return;
+          }
+          // Nothing follows this: the helper closes the client this page is
+          // drawn in. Saying so is the last useful thing on screen.
+          btn.textContent = "Steam is closing";
+        })
+        .catch(function (e) { failed(why(e)); });
+    });
+
+    return box;
+  }
+
   function addPage(data, el) {
     var err = errorEl(data, el);
     if (err) return err;
@@ -1598,6 +1661,16 @@
     // and it competed with the search field for the same row.
     // Both stack above the wash; without this they paint under it.
     style(bar, { position: "relative", zIndex: "1" });
+
+    // Above the search, because a key that is missing makes every download
+    // from this page fail, and finding that out after the download is the
+    // thing this notice exists to prevent.
+    if (num(data && data.pendingKeys) > 0) {
+      var keys = keySyncRow(el, num(data.pendingKeys));
+      style(keys, { position: "relative", zIndex: "1" });
+      browse.appendChild(keys);
+    }
+
     browse.appendChild(bar);
 
     var out = style(el("div"), { position: "relative", zIndex: "1" });
@@ -2671,9 +2744,24 @@
               var n = num(res.installed);
               report(note, true,
                 "Added " + plural(n, "file") + " from " + name +
-                ". Ownership is live immediately; depot keys need " +
-                "tools/sync_depot_keys.py run with Steam closed before this " +
-                "app's content will decrypt.", res.rejected);
+                ". Ownership is live immediately. The depot keys still have to " +
+                "reach Steam's config before this app's content can decrypt.",
+                res.rejected);
+
+              /*
+               * The offer to finish the job, right where the job was started.
+               *
+               * The count is asked for rather than assumed: a manifest whose
+               * keys config.vdf already holds adds none, and offering to close
+               * somebody's client for no work would be a lie.
+               */
+              fetch(API + "unlocker")
+                .then(function (r) { return r.json(); })
+                .then(function (u) {
+                  if (num(u && u.pendingKeys) > 0)
+                    note.appendChild(keySyncRow(el, num(u.pendingKeys)));
+                })
+                .catch(function () {});
             })
             .catch(function (e) {
               failures.push(name + ": " + why(e));

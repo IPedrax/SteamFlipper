@@ -27,8 +27,10 @@ check() {
 	else printf '  FAIL %s\n' "$2"; fails=$((fails + 1)); fi
 }
 is() { [[ "$1" == "$2" ]] && echo yes || echo no; }
-has() { grep -qF "$2" "$1" && echo yes || echo no; }
-lacks() { grep -qF "$2" "$1" && echo no || echo yes; }
+# -- so a pattern beginning with a dash is matched rather than read as an
+# option: grep failing makes `lacks` report a pass it never checked.
+has() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+lacks() { grep -qF -- "$2" "$1" && echo no || echo yes; }
 
 # --- the stubs ---------------------------------------------------------------
 #

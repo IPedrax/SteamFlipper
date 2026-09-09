@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -78,5 +79,18 @@ namespace LuaFlipperDownload {
     std::string GameDir(const std::string& appId, const std::string& steamPath);
 
     std::string Apply(const std::string& archivePath, const std::string& gameDir);
+
+    // Depot ids that already carry a DecryptionKey in config/config.vdf.
+    //
+    // Steam only decrypts a depot whose key is in that file, so this is the
+    // other half of "can this app's content actually download": a manifest
+    // supplies the key, and until it has been copied here the download starts
+    // and then stops as still encrypted.
+    //
+    // Deliberately the same shape sync_depot_keys.py matches with EXISTING_RE,
+    // because the two have to agree: this one decides whether to offer the
+    // sync, that one performs it, and a disagreement means either a button
+    // that does nothing or a gap nobody is told about.
+    std::vector<uint32_t> ConfigDepotKeys(const std::string& steamPath);
 
 } // namespace LuaFlipperDownload

@@ -32,4 +32,10 @@ namespace IPCLoader {
     size_t InterfaceCount();
     size_t MethodCount();
 
+    // One line on what Load() concluded, for the status page. Missing metadata
+    // is reported here rather than through a dialog: it happens after every
+    // Steam update until upstream publishes, resolves itself, and disables only
+    // the encrypted-app-ticket interception.
+    std::string Status();
+
 } // namespace IPCLoader

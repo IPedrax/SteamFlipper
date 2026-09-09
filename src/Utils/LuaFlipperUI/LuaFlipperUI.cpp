@@ -9,6 +9,7 @@
 #include "Utils/Config/Config.h"
 #include "Utils/Config/LuaConfig.h"
 #include "Utils/Logging/Log.h"
+#include "Utils/SteamMetadata/IPCLoader.h"
 #include "Utils/Update/AppUpdater.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -522,6 +524,27 @@ namespace {
         return j;
     }
 
+    /*
+     * Where the injected UI managed to put its tab.
+     *
+     * Written by the page over /api/uistate and read back here, because the
+     * module cannot see the DOM and the page cannot be asked from outside.
+     * The distinction it records is the one that cost a week of logs: a client
+     * with no navigation bar to attach to looks identical, from every check
+     * that can be run over SSH, to a module that never loaded.
+     */
+    std::atomic<int> g_navState{0};    // 0 unknown, 1 attached, 2 no nav
+
+    std::string NavStateText() {
+        switch (g_navState.load()) {
+            case 1:  return "attached";
+            // Named for the cause rather than the symptom: this is what Game
+            // Mode and the Deck UI look like, and the tab is desktop-only.
+            case 2:  return "no navigation bar in this client (Deck UI?)";
+            default: return "waiting for the page";
+        }
+    }
+
     std::string JsonStatus() {
         const std::vector<AppId_t> depots = LuaConfig::GetAllDepotIds();
         size_t owned = 0;
@@ -537,6 +560,11 @@ namespace {
         j += row("Depots registered", std::to_string(depots.size()), false);
         j += row("Marked owned", std::to_string(owned), false);
         j += row("UI injected", g_injected ? "yes" : "not yet", false);
+        j += row("Nav tab", NavStateText(), false);
+        // Here rather than in a dialog, so the one condition that used to
+        // interrupt startup is still answerable when somebody asks "is this
+        // working". Ownership and depot decryption do not depend on it.
+        j += row("IPC spec", IPCLoader::Status(), false);
         j += row("API", "127.0.0.1:" + std::to_string(kApiPort), false);
         j += "]}";
         return j;
@@ -547,17 +575,75 @@ namespace {
     // cap, which is the user's to supply and not something this module holds.
     // So report the local state truthfully instead of offering a download path
     // that could only ever fail.
+    // Lives further down, beside the code it was written for. Declared here
+    // because the key-sync action is wanted on the Unlocker page, which is
+    // rendered near the top of this file.
+    std::filesystem::path StateDir();
+
+    /**
+     * Depots whose key a Lua manifest has but config.vdf does not.
+     *
+     * This is the gap that makes a freshly added manifest download and then
+     * stop with "content still encrypted": ownership is registered live, the
+     * key is not, because the hook that would serve it (ConfigStoreGetBinary)
+     * needs a byte pattern for a function Valve gives no VProf scope. So the
+     * key has to be in config.vdf, and until it is, the depot cannot decrypt.
+     *
+     * Read from the file rather than by running the Python that writes it,
+     * because the answer is wanted while Steam is up, which is exactly when
+     * that script refuses to run.
+     */
+    std::vector<AppId_t> PendingDepotKeys() {
+        const std::vector<uint32_t> keyed =
+            LuaFlipperDownload::ConfigDepotKeys(g_steamPath);
+        const std::set<AppId_t> have(keyed.begin(), keyed.end());
+
+        std::vector<AppId_t> pending;
+        for (AppId_t id : LuaConfig::GetAllDepotIds()) {
+            // An entry with no key is a depot the manifest only lists; there is
+            // nothing to write for it and it is not a gap.
+            if (have.count(id) || LuaConfig::GetDecryptionKey(id).empty()) continue;
+            pending.push_back(id);
+        }
+        return pending;
+    }
+
     std::string JsonUnlocker() {
+        const std::vector<AppId_t> pending = PendingDepotKeys();
+
         std::string j = "{\"installed\":" + std::to_string(LuaFiles().size());
+        j += ",\"pendingKeys\":" + std::to_string(pending.size());
         j += ",\"results\":[],\"notes\":[";
         j += "{\"label\":\"Add by hand\",\"value\":\"Drop a .lua into " +
              JsonEscape((std::filesystem::path(g_steamPath) / "config" /
                          "stplug-in").string()) + "\"}";
         j += ",{\"label\":\"Ownership\",\"value\":\"Picked up live, no restart\"}";
-        j += ",{\"label\":\"Depot keys\",\"value\":\"Need tools/sync_depot_keys.py "
-             "with Steam closed\"}";
+        j += ",{\"label\":\"Depot keys\",\"value\":\"" +
+             (pending.empty()
+                  ? std::string("All written to config.vdf")
+                  : std::to_string(pending.size()) +
+                        " waiting; downloads for them stay encrypted") +
+             "\"}";
         j += "]}";
         return j;
+    }
+
+    /**
+     * Hand the pending keys to the detached helper.
+     *
+     * Closes Steam, so it is deliberately not on BridgeAllows: a page on
+     * Valve's domain must not be able to reach it. Only the client-window UI
+     * calls this, and only after the user has pressed the button that says so.
+     */
+    std::string JsonKeySync() {
+        const size_t pending = PendingDepotKeys().size();
+        if (pending == 0)
+            return "{\"error\":\"Every depot key is already in config.vdf.\"}";
+        if (!AppUpdater::LaunchKeySync(StateDir().string(), g_steamPath))
+            return "{\"error\":\"The helper could not be started. Run "
+                   "tools/sync_depot_keys.py with Steam closed instead.\"}";
+        LOG_INFO("LuaFlipperUI: depot-key sync started for {} depot(s)", pending);
+        return "{\"ok\":true,\"pending\":" + std::to_string(pending) + "}";
     }
 
     // Value of a query parameter, or empty. Only used for appid/source, both of
@@ -2663,6 +2749,13 @@ namespace {
         if (path == "/api/update/apply")
             return JsonSourceApply(QueryParam(fullPath, "auto") == "1");
         if (path == "/api/update/last") return JsonLastUpdate();
+        if (path == "/api/keys/sync") return JsonKeySync();
+        if (path == "/api/uistate") {
+            const std::string nav = QueryParam(fullPath, "nav");
+            if (nav == "ok")        g_navState = 1;
+            else if (nav == "none") g_navState = 2;
+            return "{\"ok\":true}";
+        }
         if (path == "/api/workshop/info")
             return JsonWorkshopInfo(QueryParam(fullPath, "q"));
         if (path == "/api/workshop/download")

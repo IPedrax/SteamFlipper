@@ -755,6 +755,41 @@ std::string ReadAll(const fs::path& p) {
 
 } // namespace
 
+std::vector<uint32_t> ConfigDepotKeys(const std::string& steamPath) {
+    std::vector<uint32_t> have;
+    const std::string text = ReadAll(fs::path(steamPath) / "config" / "config.vdf");
+    if (text.empty()) return have;
+
+    /*
+     * Walks back from each key to the depot id that owns it, rather than
+     * forward from every id: a depot id appears in blocks that carry no key at
+     * all, and counting one of those as "already has a key" would hide a real
+     * gap behind a button that reports nothing to do.
+     *
+     * The shape being matched is  "<id>" { "DecryptionKey" , which is
+     * sync_depot_keys.py's EXISTING_RE spelled out.
+     */
+    static const std::string needle = "\"DecryptionKey\"";
+    for (size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size())) {
+        const size_t brace = text.rfind('{', at);
+        if (brace == std::string::npos || brace == 0) continue;
+        const size_t close = text.rfind('"', brace);
+        if (close == std::string::npos || close == 0) continue;
+        const size_t open = text.rfind('"', close - 1);
+        if (open == std::string::npos) continue;
+
+        const std::string id = text.substr(open + 1, close - open - 1);
+        // 10 digits is the widest a 32-bit id can be; longer is not one, and
+        // stoul on it would throw out of a function that must not.
+        if (id.empty() || id.size() > 10) continue;
+        if (id.find_first_not_of("0123456789") != std::string::npos) continue;
+        const unsigned long v = std::stoul(id);
+        if (v <= 0xFFFFFFFFul) have.push_back(static_cast<uint32_t>(v));
+    }
+    return have;
+}
+
 std::vector<std::string> Libraries(const std::string& steamPath) {
 #if defined(__linux__)
     // The Steam root is a library itself and is not listed as one in every

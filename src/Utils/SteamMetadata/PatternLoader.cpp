@@ -407,8 +407,15 @@ void* FindPattern(SFPlatform::DynamicLibrary::ModuleHandle module, const char* f
  */
 bool RequiredForUnlock(const std::string& name)
 {
+    // GetOrAddAppData is deliberately absent. Its hook is commented out in
+    // Hooks_Misc.cpp, so nothing installs it and nothing calls through it --
+    // listing it as required meant a Steam build where the generator cannot
+    // resolve it was declared unsupported over a function the module does not
+    // use. Current clients carry three candidates for that name, the generator
+    // refuses to guess between them (correctly), and every install on those
+    // builds therefore came up unsupported with the UI disabled.
     static const char* kRequired[] = {
-        "CheckAppOwnership", "BuildDepotDependency", "GetOrAddAppData",
+        "CheckAppOwnership", "BuildDepotDependency",
         "GetPackageInfo", "CUtlMemoryGrow", "CPackageInfoCacheGlobal",
     };
     for (const char* r : kRequired)

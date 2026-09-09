@@ -37,8 +37,8 @@ yourself.
 | Depot manifests | `<Steam>/depotcache/*.manifest` | **your app** |
 | Depot decryption keys | `<Steam>/config/config.vdf` → `depots` block | **your app** (see §4) |
 | Module config | `<Steam>/steamflipper.toml` | user / your app |
-| Category logs | `<Steam>/steamflipper/*.log` | SteamFlipper |
-| Main log | `<Steam>/ubuntu12_32/steamflipper/main.log` | SteamFlipper |
+| Category logs (Debug builds only) | `<Steam>/steamflipper/*.log` | SteamFlipper |
+| Main log (Debug builds only) | `~/.local/lib/steamflipper/32/steamflipper/main.log` | SteamFlipper |
 | Hook addresses | `<Steam>/ubuntu12_32/steamflipper/pattern/` | installer |
 | The module | `~/.local/lib/steamflipper/32/SteamFlipper.so` | installer |
 | Injection point | `<Steam>/ubuntu12_32/libXtst.so.6` | installer |
@@ -136,8 +136,11 @@ Ordered from cheapest to most reliable:
 2. **Injected**, `<Steam>/ubuntu12_32/libXtst.so.6` contains the marker string
    `SF_RUNTIME_PATH` (the stock library does not).
 3. **Loaded**, `SteamFlipper.so` appears in `/proc/<steam-pid>/maps`.
-4. **Working**, `main.log` contains `Hook: attached CheckAppOwnership`, and
-   `<Steam>/steamflipper/package.log` contains
+4. **Working**, `curl -s http://127.0.0.1:1987/api/status` answers, and its
+   `UI injected` row reads `yes`. This is the only one of the four that a
+   Release build can report, because Release compiles logging out entirely.
+   On a Debug build, `main.log` also contains `Hook: attached
+   CheckAppOwnership` and `<Steam>/steamflipper/package.log` contains
    `InitFakeLicense(PackageId=0): adding N apps`.
 
 **Logging only exists in Debug builds.** `STEAMFLIPPER_LOGGING_ENABLED` is
