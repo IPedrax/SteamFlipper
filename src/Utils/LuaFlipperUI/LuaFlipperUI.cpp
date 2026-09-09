@@ -533,7 +533,7 @@ namespace {
      * with no navigation bar to attach to looks identical, from every check
      * that can be run over SSH, to a module that never loaded.
      */
-    std::atomic<int> g_navState{0};    // 0 unknown, 1 attached, 2 no nav
+    std::atomic<int> g_navState{0};    // 0 unknown, 1 attached, 2 no nav, 3 deck
 
     std::string NavStateText() {
         switch (g_navState.load()) {
@@ -541,6 +541,10 @@ namespace {
             // Named for the cause rather than the symptom: this is what Game
             // Mode and the Deck UI look like, and the tab is desktop-only.
             case 2:  return "no navigation bar in this client (Deck UI?)";
+            // Distinct from the above, because the outcome is different: there
+            // is still no nav, but there is a way in, so "no tab" is no longer
+            // the same as "no UI".
+            case 3:  return "Deck UI, using the corner launcher";
             default: return "waiting for the page";
         }
     }
@@ -2754,6 +2758,7 @@ namespace {
             const std::string nav = QueryParam(fullPath, "nav");
             if (nav == "ok")        g_navState = 1;
             else if (nav == "none") g_navState = 2;
+            else if (nav == "deck") g_navState = 3;
             return "{\"ok\":true}";
         }
         if (path == "/api/workshop/info")

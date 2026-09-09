@@ -734,14 +734,137 @@
     releaseHighlight();
   }
 
+  /* ------------------------------------------------------------ deck ui --- */
+
+  /*
+   * The Deck UI, which is what Steam draws when it is started with -steamdeck.
+   *
+   * It is a different application from the desktop client, not a reskin: no
+   * SuperNavBar to put a tab in, no ContentFrame to mount a page in, and none
+   * of the classes either of those imply. Decky reaches it by patching the
+   * Quick Access Menu through React internals and webpack module extraction,
+   * which is why a Steam update routinely breaks Decky and why that route is
+   * not taken here.
+   *
+   * What is taken instead is the part that needs nothing from Steam: a button
+   * and a panel of our own, over the top. Less integrated, and it survives
+   * Valve rebuilding their frontend, which this port has already watched
+   * happen twice.
+   *
+   * Two of the five pages are missing here, and cannot be added this way.
+   * Unlocker and Workshop are not pages of ours at all: they are Steam's own
+   * store and community views, opened by clicking the desktop nav buttons that
+   * do not exist in this UI. The three that are local work unchanged, because
+   * they only ever needed somewhere to be drawn.
+   */
+  var DECK_HOST_ID = "luaflipper-deck-host";
+  var DECK_BTN_ID = "luaflipper-deck-btn";
+
+  // Local pages only, in the order the launcher offers them.
+  function deckPages() {
+    var out = [];
+    for (var i = 0; i < PAGES.length; i++) {
+      if (!LEASE[PAGES[i].page]) out.push(PAGES[i]);
+    }
+    return out;
+  }
+
+  /**
+   * The panel our pages are drawn into, standing in for ContentFrame.
+   *
+   * Fixed and on top rather than inserted into Steam's layout, because the
+   * layout is React's and anything put inside it is removed on the next
+   * render. Owning a fixed layer means owning nothing of theirs.
+   */
+  function deckHost() {
+    var host = document.getElementById(DECK_HOST_ID);
+    if (host) return host;
+
+    host = document.createElement("div");
+    host.id = DECK_HOST_ID;
+    host.style.cssText =
+      "position:fixed;left:0;top:0;right:0;bottom:0;z-index:7000;" +
+      "background:#1b2838;color:#c7d5e0;overflow:auto;" +
+      "font-family:'Motiva Sans',Arial,sans-serif;";
+
+    var bar = document.createElement("div");
+    bar.style.cssText =
+      "display:flex;align-items:center;gap:8px;padding:10px 14px;" +
+      "background:rgba(0,0,0,0.25);position:sticky;top:0;z-index:1;";
+
+    deckPages().forEach(function (p) {
+      var b = document.createElement("div");
+      b.textContent = p.label;
+      b.style.cssText =
+        "padding:6px 14px;border-radius:3px;cursor:pointer;font-size:14px;" +
+        "background:rgba(255,255,255,0.08);";
+      b.addEventListener("click", function () { openPage(p.page); });
+      bar.appendChild(b);
+    });
+
+    var spacer = document.createElement("div");
+    spacer.style.flex = "1";
+    bar.appendChild(spacer);
+
+    var x = document.createElement("div");
+    x.textContent = "Close";
+    x.style.cssText =
+      "padding:6px 14px;border-radius:3px;cursor:pointer;font-size:14px;" +
+      "background:rgba(255,255,255,0.08);";
+    x.addEventListener("click", closeDeck);
+    bar.appendChild(x);
+
+    host.appendChild(bar);
+    document.body.appendChild(host);
+    return host;
+  }
+
+  function closeDeck() {
+    closePage();
+    var host = document.getElementById(DECK_HOST_ID);
+    if (host) host.remove();
+  }
+
+  /**
+   * The way in, when there is no navigation bar to put a tab in.
+   *
+   * Deliberately a corner button and not an attempt to look native: anything
+   * that imitated the Deck UI's own controls would have to track their class
+   * names, which is the dependency this whole approach exists to avoid.
+   */
+  function installDeckLauncher() {
+    if (document.getElementById(DECK_BTN_ID)) return;
+    if (!document.body) return;
+
+    var b = document.createElement("div");
+    b.id = DECK_BTN_ID;
+    b.textContent = "LUAFlipper";
+    b.style.cssText =
+      "position:fixed;right:16px;bottom:16px;z-index:7001;padding:10px 16px;" +
+      "border-radius:4px;background:#1a9fff;color:#fff;font-size:14px;" +
+      "font-weight:bold;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);" +
+      "font-family:'Motiva Sans',Arial,sans-serif;";
+    b.addEventListener("click", function () {
+      if (document.getElementById(DECK_HOST_ID)) { closeDeck(); return; }
+      openPage(deckPages()[0].page);
+    });
+    document.body.appendChild(b);
+    log("deck launcher installed");
+    reportNav("deck");
+  }
+
   /**
    * Open a page in the content area, the way a stock tab does: Steam's routed
    * content is hidden rather than destroyed, and ours becomes its sibling
    * inside ContentFrame, so it inherits that frame's themed background.
    */
   function openPage(page) {
-    var frame = document.querySelector(".ContentFrame");
-    if (!frame) { log("ContentFrame not found; cannot open page"); return; }
+    // No ContentFrame means this is not the desktop client: the Deck UI is a
+    // different app that shares none of that markup. The page still has to go
+    // somewhere, so it goes over the top of whatever is there. See
+    // deckLauncher for why that is the whole of the port and not a shortcut.
+    var frame = document.querySelector(".ContentFrame") || deckHost();
+    if (!frame) { log("nowhere to mount a page"); return; }
 
     closePage();
 
@@ -911,7 +1034,16 @@
      * goes in and reportNav("ok") corrects the record.
      */
     setTimeout(function () {
-      if (!document.getElementById(TAB_ID)) reportNav("none");
+      if (document.getElementById(TAB_ID)) return;
+      // No nav after twenty seconds means no nav at all, and that is precisely
+      // the client the launcher exists for. Gated on this rather than on
+      // sniffing for the Deck UI: the desktop client never reaches here, so
+      // nothing below can affect it.
+      if (!document.querySelector(".ContentFrame")) {
+        installDeckLauncher();
+        return;
+      }
+      reportNav("none");
     }, 20000);
 
     window.__luaflipperCleanup = function () {
@@ -920,6 +1052,12 @@
       closePage();
       var tab = document.getElementById(TAB_ID);
       if (tab) tab.remove();
+      // The Deck UI's two, which are ours alone and so are not restored by
+      // anything else: leaving them behind would stack a second launcher on
+      // top of the first every time the injector re-runs this script.
+      closeDeck();
+      var deckBtn = document.getElementById(DECK_BTN_ID);
+      if (deckBtn) deckBtn.remove();
       window.__luaflipperCleanup = null;
     };
   }
