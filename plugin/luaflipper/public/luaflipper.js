@@ -897,6 +897,23 @@
     var obs = new MutationObserver(function () { injectTab(); });
     obs.observe(document.body, { childList: true, subtree: true });
 
+    /*
+     * Decide "there is no nav here" on a clock, not on a retry count.
+     *
+     * The retry above is driven by the observer, so navMisses only climbs
+     * while the DOM is churning. A client that renders once and then sits
+     * still can miss any threshold forever, which left the module reporting
+     * "waiting for the page" for the whole session: the exact ambiguity the
+     * report exists to remove, just under a friendlier name.
+     *
+     * Twenty seconds is well past a slow client's first render, and being
+     * early costs nothing anyway: if the nav does turn up afterwards, the tab
+     * goes in and reportNav("ok") corrects the record.
+     */
+    setTimeout(function () {
+      if (!document.getElementById(TAB_ID)) reportNav("none");
+    }, 20000);
+
     window.__luaflipperCleanup = function () {
       obs.disconnect();
       closeMenu();
