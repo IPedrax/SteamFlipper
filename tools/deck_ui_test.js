@@ -34,7 +34,12 @@ function makeNode(tag) {
     style: new Proxy({ cssText: "" }, { set: (t, k, v) => (t[k] = v, true) }),
     classList: { add() {}, remove() {}, contains: () => false },
     setAttribute() {}, getAttribute: () => null, removeAttribute() {},
-    addEventListener() {}, removeEventListener() {},
+    // Real enough to click: the hide-and-restore path only runs from handlers,
+    // and it is the one that can leave the client blank.
+    _on: {},
+    addEventListener(type, fn) { (node._on[type] ||= []).push(fn); },
+    removeEventListener() {},
+    click() { (node._on.click || []).forEach((fn) => fn({ preventDefault() {}, stopPropagation() {} })); },
     querySelector: () => null, querySelectorAll: () => [],
     closest: () => null, contains: () => false,
     appendChild(c) { c.parentElement = node; node.children.push(c); return c; },
@@ -61,6 +66,12 @@ function byId(root, id) {
 
 function run(kind) {
   const body = makeNode("body");
+  // Stands in for popup_target, the Deck UI's single root. Hiding it is how
+  // the panel gets Steam's browser views out from under itself, and putting
+  // it back is the half that matters.
+  const steamRoot = makeNode("div");
+  steamRoot.id = "popup_target";
+  body.appendChild(steamRoot);
   const contentFrame = kind === "desktop" ? makeNode("div") : null;
 
   const document = {
@@ -100,7 +111,7 @@ function run(kind) {
   // Fire the twenty-second decision, which is where the fallback is chosen.
   timers.filter((t) => t.ms === 20000).forEach((t) => t.fn());
 
-  return { body, sandbox };
+  return { body, sandbox, steamRoot };
 }
 
 console.log("The desktop client");
@@ -120,6 +131,42 @@ console.log("The Deck UI");
   check(btn && btn.textContent === "LUAFlipper", "and it says what it is");
   check(byId(body, "luaflipper-deck-host") === null,
         "the panel waits to be asked for, rather than opening over the client");
+}
+
+console.log("Opening and closing the panel");
+{
+  // A z-index cannot win against a browser view, so the panel hides Steam's
+  // root instead. That makes putting it back the safety-critical half: leave
+  // it hidden and the client is blank with no way out but restarting Steam.
+  const { body, steamRoot } = run("deck");
+  const before = steamRoot.style.display;
+  byId(body, "luaflipper-deck-btn").click();
+
+  check(byId(body, "luaflipper-deck-host") !== null, "the panel opens");
+  check(steamRoot.style.display === "none",
+        "and Steam's root is hidden, so nothing of theirs can paint over it");
+
+  const bar = byId(body, "luaflipper-deck-host").children[0];
+  bar.children.find((c) => c.textContent === "Close").click();
+  check(byId(body, "luaflipper-deck-host") === null, "Close removes the panel");
+  check(steamRoot.style.display === before,
+        "and puts Steam back exactly as it was, not merely visible");
+  check(byId(body, "luaflipper-deck-btn") !== null,
+        "the launcher survives, so it can be opened again");
+}
+
+console.log("Cleanup while the panel is open");
+{
+  // The injector re-evaluates this script on reconnect, which runs cleanup
+  // whenever it happens to run. If that leaves Steam hidden, the client is
+  // dead until it restarts.
+  const { body, sandbox, steamRoot } = run("deck");
+  const before = steamRoot.style.display;
+  byId(body, "luaflipper-deck-btn").click();
+  check(steamRoot.style.display === "none", "Steam is hidden with the panel up");
+  sandbox.window.__luaflipperCleanup();
+  check(steamRoot.style.display === before,
+        "and cleanup puts it back, rather than leaving a blank client");
 }
 
 console.log("Running it twice, as the injector does");

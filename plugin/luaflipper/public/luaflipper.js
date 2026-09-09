@@ -776,6 +776,44 @@
    * layout is React's and anything put inside it is removed on the next
    * render. Owning a fixed layer means owning nothing of theirs.
    */
+  /*
+   * Get Steam out from under the panel, and put it back.
+   *
+   * A z-index is not enough and never was. Parts of this client are browser
+   * views, native surfaces the client composites over the page, and those beat
+   * any DOM at any depth. The desktop dropdown hit this exact wall and solved
+   * it the same way, by standing the view aside while the menu is open.
+   *
+   * hideStock does that on the desktop through .LocalContentContainer and
+   * .BrowserWrapper, and both match nothing here, so nothing was moving. This
+   * hides the client's root instead of naming its parts: what is underneath
+   * stops being drawn whether it is DOM or a surface anchored to DOM, and no
+   * class name has to stay true for it to keep working.
+   *
+   * The previous inline display is put back rather than cleared, because Steam
+   * drives its own views by writing display straight onto them and blanking
+   * that would un-hide whichever one it had hidden.
+   */
+  var deckHidden = [];
+
+  function deckHideRoot() {
+    deckRestoreRoot();
+    var kids = document.body ? document.body.children : [];
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      if (k.id === DECK_HOST_ID || k.id === DECK_BTN_ID) continue;
+      deckHidden.push({ el: k, display: k.style.display });
+      k.style.display = "none";
+    }
+  }
+
+  function deckRestoreRoot() {
+    for (var i = 0; i < deckHidden.length; i++) {
+      deckHidden[i].el.style.display = deckHidden[i].display;
+    }
+    deckHidden = [];
+  }
+
   function deckHost() {
     var host = document.getElementById(DECK_HOST_ID);
     if (host) return host;
@@ -816,6 +854,8 @@
 
     host.appendChild(bar);
     document.body.appendChild(host);
+    // After the panel is in, so it is never itself one of the things hidden.
+    deckHideRoot();
     return host;
   }
 
@@ -823,6 +863,10 @@
     closePage();
     var host = document.getElementById(DECK_HOST_ID);
     if (host) host.remove();
+    // Unconditional, and last: leaving this undone leaves the client blank
+    // with no way back short of restarting Steam, which is a far worse bug
+    // than the one the hiding fixes.
+    deckRestoreRoot();
   }
 
   /**
