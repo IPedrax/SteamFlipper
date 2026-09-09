@@ -6,6 +6,10 @@
 #   ./tools/install_linux.sh --no-build         install from an existing build/
 #   ./tools/install_linux.sh --with-millennium  also wire up Millennium (opt-in)
 #   ./tools/install_linux.sh --no-millennium    and stop doing so
+#   ./tools/install_linux.sh --no-steamdeck     drop -steamdeck from this user's
+#                                               Steam autostart entries, so the
+#                                               desktop client starts and the tab
+#                                               has a nav bar to attach to
 #   ./tools/install_linux.sh --uninstall        restore Steam to stock
 #
 # Everything lands under $HOME — nothing system-wide, no root, no PATH changes.
@@ -165,6 +169,10 @@ if [ -f "${STATE_FILE}" ] && grep -q '^millennium=1$' "${STATE_FILE}" 2>/dev/nul
     WITH_MILLENNIUM=1
 fi
 NO_BUILD=0
+# Off by default, and it stays that way. See steamdeck_flag below: the flag it
+# removes is how a handheld is meant to start, so taking it away is a choice
+# only the person using the machine can make.
+STRIP_STEAMDECK=0
 # unset = decide automatically: build natively when the toolchain works, and
 # fall back to a container only when it does not.
 USE_CONTAINER=""
@@ -176,6 +184,7 @@ for arg in "$@"; do
         --no-container)     USE_CONTAINER=0 ;;
         --with-millennium)  WITH_MILLENNIUM=1; MILLENNIUM_EXPLICIT=1 ;;
         --no-millennium)    WITH_MILLENNIUM=0; MILLENNIUM_EXPLICIT=1 ;;
+        --no-steamdeck)     STRIP_STEAMDECK=1 ;;
         -h|--help)
             sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -812,6 +821,77 @@ SteamFlipper is installed, but NOT FUNCTIONAL on this Steam build.
 EOF
     exit 1
 fi
+
+# =============================================================================
+# The -steamdeck flag
+#
+# Steam started with it renders the Deck UI, which has no navigation bar, so the
+# LUAFlipper tab has nowhere to attach and never appears. Everything else keeps
+# working: ownership injection, depot decryption and cloud saves do not touch
+# the nav.
+#
+# Reported, and only removed when asked. On a handheld that flag is not a
+# mistake, it is how the device is meant to start and the only interface a
+# controller can drive, so silently taking it away would break the machine to
+# make one tab appear.
+#
+# Only files this user owns are touched, and only ones that launch Steam on the
+# desktop. Game Mode is a separate gamescope session with its own launcher under
+# /usr, which is left alone: it is root-owned, an atomic image would revert it
+# anyway, and it is exactly the case where the flag belongs.
+# =============================================================================
+steamdeck_flag() {
+    local running="" found=() f
+    local pid; pid="$(pgrep -x steam 2>/dev/null | head -1 || true)"
+    if [ -n "${pid}" ] && [ -r "/proc/${pid}/cmdline" ]; then
+        tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -q -- '-steamdeck' \
+            && running="yes"
+    fi
+
+    for f in "${HOME}/.config/autostart/"*.desktop \
+             "${HOME}/.local/share/applications/"*.desktop; do
+        [ -f "${f}" ] || continue
+        grep -q -- '-steamdeck' "${f}" 2>/dev/null && found+=("${f}")
+    done
+
+    [ -z "${running}" ] && [ ${#found[@]} -eq 0 ] && return 0
+
+    echo
+    if [ -n "${running}" ]; then
+        say "The running Steam was started with -steamdeck, so it is drawing the"
+        say "    Deck UI. The LUAFlipper tab is desktop-only and will not appear."
+    else
+        say "Something here starts Steam with -steamdeck, which draws the Deck UI."
+        say "    The LUAFlipper tab is desktop-only and will not appear there."
+    fi
+
+    if [ ${#found[@]} -eq 0 ]; then
+        say "    No user autostart entry sets it, so it comes from the session"
+        say "    itself (Game Mode) or a system launcher. Starting Steam from a"
+        say "    terminal with 'steam' gets you the desktop client."
+        return 0
+    fi
+
+    if [ "${STRIP_STEAMDECK}" != "1" ]; then
+        for f in "${found[@]}"; do say "    sets it: ${f}"; done
+        say "    Re-run with --no-steamdeck to remove it from those, or edit them"
+        say "    by hand. Leave it if you use this machine as a handheld."
+        return 0
+    fi
+
+    for f in "${found[@]}"; do
+        cp -p "${f}" "${f}.sf-orig" 2>/dev/null || true
+        # Only the standalone flag: -steamdeckrandom would not be this one, and
+        # a substring edit would corrupt it.
+        if sed -i 's/[[:space:]]\{1,\}-steamdeck\([[:space:]]\|$\)/\1/g' "${f}" 2>/dev/null; then
+            say "    removed -steamdeck from ${f} (original at ${f}.sf-orig)"
+        else
+            warn "could not edit ${f}; remove -steamdeck from it by hand"
+        fi
+    done
+    say "    Log out and back in, or restart Steam, for that to take effect."
+}
+steamdeck_flag
 
 cat <<EOF
 
