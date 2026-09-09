@@ -3009,6 +3009,13 @@ namespace {
             // The nav lives in the main client window. SharedJSContext holds an
             // effectively empty document and is the wrong target.
             size_t at = list.find("\"Steam\"");
+            // Big Picture is the Deck UI running on a desktop install, and it
+            // replaces the main window rather than joining it: switching into
+            // it leaves no target called "Steam" at all, and its createflags
+            // are its own. Without this the module goes quiet the moment
+            // somebody opens Big Picture, which is exactly when the Deck
+            // launcher should be appearing.
+            if (at == std::string::npos) at = list.find("\"Steam Big Picture Mode\"");
             if (at == std::string::npos) at = list.find("createflags=18");
             if (at == std::string::npos) {
                 once(2, "CEF is up but the main client window target was not "

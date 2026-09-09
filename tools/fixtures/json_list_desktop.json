@@ -1,0 +1,121 @@
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/A8E7ECAAD18D9C93E052732FC06DCA9B",
+   "id": "A8E7ECAAD18D9C93E052732FC06DCA9B",
+   "title": "Profile Supernav",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/A8E7ECAAD18D9C93E052732FC06DCA9B"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/B40D8CB7822E9D8BA1D4DA2CFE187CA7",
+   "id": "B40D8CB7822E9D8BA1D4DA2CFE187CA7",
+   "title": "Community Supernav",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/B40D8CB7822E9D8BA1D4DA2CFE187CA7"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/9F680998D01F286F5107439302B61EF9",
+   "id": "9F680998D01F286F5107439302B61EF9",
+   "title": "Library Supernav",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/9F680998D01F286F5107439302B61EF9"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/4D2945A50DE883FFECD8ECEC790F386A",
+   "id": "4D2945A50DE883FFECD8ECEC790F386A",
+   "title": "Store Supernav",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/4D2945A50DE883FFECD8ECEC790F386A"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/028551F2AEE644E2824947F333A4EEE7",
+   "id": "028551F2AEE644E2824947F333A4EEE7",
+   "title": "Account Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/028551F2AEE644E2824947F333A4EEE7"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/9329537DA91B9752482A449FD57BA051",
+   "id": "9329537DA91B9752482A449FD57BA051",
+   "title": "Notifications Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/9329537DA91B9752482A449FD57BA051"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/D28E58EFCEBAA29D93893DCAD25D6E6E",
+   "id": "D28E58EFCEBAA29D93893DCAD25D6E6E",
+   "title": "Help Root Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/D28E58EFCEBAA29D93893DCAD25D6E6E"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/D51BC1B38F82FCB6D44750A6CB16D554",
+   "id": "D51BC1B38F82FCB6D44750A6CB16D554",
+   "title": "Games Root Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/D51BC1B38F82FCB6D44750A6CB16D554"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/1E244EA6D68F1477CE6D494DDEE61DC1",
+   "id": "1E244EA6D68F1477CE6D494DDEE61DC1",
+   "title": "Friends Root Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/1E244EA6D68F1477CE6D494DDEE61DC1"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/F0F2542C5536B67988A79B4C9E1C70C1",
+   "id": "F0F2542C5536B67988A79B4C9E1C70C1",
+   "title": "Steam Root Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/F0F2542C5536B67988A79B4C9E1C70C1"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/A9EA5162F0516753F1B87C274443F477",
+   "id": "A9EA5162F0516753F1B87C274443F477",
+   "title": "View Root Menu",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=94",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/A9EA5162F0516753F1B87C274443F477"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/2E85D52751CABC14F28B0137488F5D88",
+   "id": "2E85D52751CABC14F28B0137488F5D88",
+   "title": "data:text/html,&lt;body&gt;&lt;%2Fbody&gt;&lt;!--tracking:mt9gcc:/library/home--&gt;",
+   "type": "page",
+   "url": "data:text/html,%3Cbody%3E%3C%2Fbody%3E%3C!--tracking:mt9gcc:/library/home--%3E",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/2E85D52751CABC14F28B0137488F5D88"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/F44BD04E27FA21BE8D9742553CC1C8FD",
+   "id": "F44BD04E27FA21BE8D9742553CC1C8FD",
+   "title": "Steam",
+   "type": "page",
+   "url": "about:blank?createflags=274&minwidth=1010&minheight=600&pid=0&browser=-1&browserType=4&restoredetails=1&x=0&y=0&w=1920&h=1080&max=1&maxX=0&maxY=0&maxW=1920&maxH=1080&useragent=Valve%20Steam%20Client",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/F44BD04E27FA21BE8D9742553CC1C8FD"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/3AE3893473E3779E856D43EB10AD9BBA",
+   "id": "3AE3893473E3779E856D43EB10AD9BBA",
+   "title": "undefined",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=3",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/3AE3893473E3779E856D43EB10AD9BBA"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/AF30EFB905B0F23338AB3C4A5688FA10",
+   "id": "AF30EFB905B0F23338AB3C4A5688FA10",
+   "title": "SharedJSContext",
+   "type": "page",
+   "url": "https://steamloopback.host/routes/library/home",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/AF30EFB905B0F23338AB3C4A5688FA10"
+} ]

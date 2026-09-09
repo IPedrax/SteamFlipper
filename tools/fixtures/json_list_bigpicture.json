@@ -1,0 +1,49 @@
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/3A90B3647772640D204883081449AE9F",
+   "id": "3A90B3647772640D204883081449AE9F",
+   "title": "notificationtoasts_uid90",
+   "type": "page",
+   "url": "about:blank?browserviewpopup=1&requestid=8&parentpopup=90&createflags=512",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/3A90B3647772640D204883081449AE9F"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/30CE81C3EB4847D7070FD639186E5316",
+   "id": "30CE81C3EB4847D7070FD639186E5316",
+   "title": "QuickAccess_uid90",
+   "type": "page",
+   "url": "about:blank?browserviewpopup=1&requestid=7&parentpopup=90",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/30CE81C3EB4847D7070FD639186E5316"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/846449191DC517258D8852F59C09EF9E",
+   "id": "846449191DC517258D8852F59C09EF9E",
+   "title": "MainMenu_uid90",
+   "type": "page",
+   "url": "about:blank?browserviewpopup=1&requestid=6&parentpopup=90",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/846449191DC517258D8852F59C09EF9E"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/9A2AAE70250F0473E4E5D84C5BA2D5E9",
+   "id": "9A2AAE70250F0473E4E5D84C5BA2D5E9",
+   "title": "Steam Big Picture Mode",
+   "type": "page",
+   "url": "about:blank?createflags=6292754&minwidth=853&minheight=534&pid=0&browser=-1&browserType=3&useragent=Valve%20Steam%20Gamepad",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/9A2AAE70250F0473E4E5D84C5BA2D5E9"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/3AE3893473E3779E856D43EB10AD9BBA",
+   "id": "3AE3893473E3779E856D43EB10AD9BBA",
+   "title": "undefined",
+   "type": "page",
+   "url": "about:blank?createflags=4538378&pid=0&browser=-1&screenavailwidth=1920&screenavailheight=1080&openerid=3",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/3AE3893473E3779E856D43EB10AD9BBA"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8080/devtools/page/AF30EFB905B0F23338AB3C4A5688FA10",
+   "id": "AF30EFB905B0F23338AB3C4A5688FA10",
+   "title": "SharedJSContext",
+   "type": "page",
+   "url": "https://steamloopback.host/routes/library/home",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:8080/devtools/page/AF30EFB905B0F23338AB3C4A5688FA10"
+} ]
