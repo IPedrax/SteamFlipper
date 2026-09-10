@@ -28,8 +28,18 @@ import subprocess
 import sys
 import time
 
-# addappid(<depot>, 1, "<64 hex chars>") -- the trailing 1 means "has a key".
-KEY_RE = re.compile(r'^\s*addappid\(\s*(\d+)\s*,\s*1\s*,\s*"([0-9a-fA-F]{64})"', re.M)
+# addappid(<depot>, <flag>, "<64 hex chars>") -- the key is the third argument
+# and the flag is not read at all.
+#
+# This matched only a flag of 1 until it was noticed that manifests in the wild
+# write 0 there just as often. The module never agreed with that reading:
+# lua_addappid takes the id from argument one and the key from argument three,
+# and never looks at argument two, so to the module the two forms are the same
+# manifest. Requiring 1 here silently dropped every key written the other way:
+# 294 of them across 64 manifests on the machine where this was found, each one
+# a game that downloads and then stops as still encrypted, with the sync
+# cheerfully reporting nothing to do.
+KEY_RE = re.compile(r'^\s*addappid\(\s*(\d+)\s*,\s*\d+\s*,\s*"([0-9a-fA-F]{64})"', re.M)
 
 # A depot entry already present in config.vdf's depots block.
 EXISTING_RE = re.compile(r'"(\d+)"\s*\{\s*"DecryptionKey"')
