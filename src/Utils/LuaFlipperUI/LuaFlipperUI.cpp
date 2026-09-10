@@ -9,6 +9,7 @@
 #include "Utils/Config/Config.h"
 #include "Utils/Config/LuaConfig.h"
 #include "Utils/Logging/Log.h"
+#include "Hook/Hooks_Package.h"
 #include "Utils/SteamMetadata/IPCLoader.h"
 #include "Utils/Update/AppUpdater.h"
 
@@ -565,6 +566,10 @@ namespace {
         j += row("Marked owned", std::to_string(owned), false);
         j += row("UI injected", g_injected ? "yes" : "not yet", false);
         j += row("Nav tab", NavStateText(), false);
+        // The one that answers "why does nothing I add show up". Injection
+        // failing takes every manifest with it, and until now said so only in
+        // a log that Release does not write.
+        j += row("Depot injection", Hooks_Package::LicenseStatus(), false);
         // Here rather than in a dialog, so the one condition that used to
         // interrupt startup is still answerable when somebody asks "is this
         // working". Ownership and depot decryption do not depend on it.
@@ -3090,22 +3095,54 @@ namespace {
  * alternative is interrupting a session later -- but it is not the right
  * instant, so it waits for Steam to finish coming up first.
  */
+/*
+ * Write the manifests' depot keys into config.vdf, if asked to.
+ *
+ * Off unless [keys] auto_sync is set, and opt-in for the same reason
+ * [update].auto_install is: the only way this can work is with Steam closed,
+ * because Steam rewrites config.vdf as it exits and discards anything written
+ * underneath it. So the helper closes the client, writes, and starts it again.
+ * Nobody should discover that by having their session end unannounced.
+ *
+ * Without it a manifest added while Steam is running claims ownership live but
+ * its depot key waits for a restart, and the game downloads and then stops as
+ * still encrypted with nothing on screen connecting the two.
+ */
+void MaybeSyncDepotKeys() {
+    if (!Config::GetKeysAutoSync()) return;
+
+    const size_t pending = PendingDepotKeys().size();
+    if (pending == 0) {
+        LOG_INFO("KeySync: every depot key is already in config.vdf");
+        return;
+    }
+    LOG_INFO("KeySync: {} depot key(s) missing from config.vdf, syncing", pending);
+    AppUpdater::LaunchKeySync(StateDir().string(), g_steamPath);
+}
+
 void AutoUpdateThread() {
     // Long enough for the client to be usable, so a machine that updates on
     // every start still shows something before it goes away again, and short
     // enough to be before anyone has launched a game.
     std::this_thread::sleep_for(std::chrono::seconds(45));
 
-    if (!Config::GetUpdateAutoInstall()) return;
-    if (Config::GetUpdateRepo().empty()) {
-        LOG_INFO("AutoUpdate: [update] auto_install is on but repo is unset");
+    /*
+     * The game guard comes first because it covers both jobs below, not just
+     * the update. A game means Steam is doing the thing it exists for, and
+     * neither closing it for a rebuild nor closing it to write depot keys is
+     * worth that; the next start will ask again.
+     */
+    if (std::system("pgrep -x reaper >/dev/null 2>&1") == 0) {
+        LOG_INFO("AutoUpdate: a game is running, leaving it alone");
         return;
     }
 
-    // A game means Steam is doing the thing it exists for. Nothing here is
-    // worth killing that; the next start will ask again.
-    if (std::system("pgrep -x reaper >/dev/null 2>&1") == 0) {
-        LOG_INFO("AutoUpdate: a game is running, leaving it alone");
+    if (!Config::GetUpdateAutoInstall() || Config::GetUpdateRepo().empty()) {
+        if (!Config::GetUpdateAutoInstall())
+            LOG_INFO("AutoUpdate: [update] auto_install is off");
+        else
+            LOG_INFO("AutoUpdate: [update] auto_install is on but repo is unset");
+        MaybeSyncDepotKeys();
         return;
     }
 
@@ -3113,6 +3150,10 @@ void AutoUpdateThread() {
     if (c.relation != "behind") {
         LOG_INFO("AutoUpdate: {} vs {} -> {}, nothing to do",
                  c.version, c.remoteVersion, c.relation);
+        // No update is going out, so nothing else is about to close Steam and
+        // run the installer. That matters because the installer syncs the keys
+        // itself: this is only the path where it never runs.
+        MaybeSyncDepotKeys();
         return;
     }
 
@@ -3131,6 +3172,7 @@ void AutoUpdateThread() {
         last.version == c.remoteVersion) {
         LOG_WARN("AutoUpdate: {} already failed to build here, not retrying it",
                  c.remoteVersion);
+        MaybeSyncDepotKeys();
         return;
     }
 
@@ -3138,6 +3180,7 @@ void AutoUpdateThread() {
     const AppUpdater::PullResult p = AppUpdater::PullSource();
     if (!p.ok) {
         LOG_WARN("AutoUpdate: pull refused ({}): {}", p.status, p.error);
+        MaybeSyncDepotKeys();
         return;
     }
     AppUpdater::LaunchAutoUpdate(StateDir().string());

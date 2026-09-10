@@ -1,4 +1,5 @@
 #include "Hooks_Package.h"
+#include "EnsureRoom.h"
 #include "HookMacros.h"
 #include "Hooks_SteamUI.h"
 #include "dllmain.h"
@@ -16,6 +17,18 @@ namespace {
     PackageInfo* g_pInjectedPackageInfo = nullptr;
     bool  g_licenseInitialized = false;
     bool  g_licenseRefreshPending = false;
+
+    /*
+     * What the last injection attempt did, for /api/status.
+     *
+     * Every outcome below is already logged, and every one of those logs is
+     * compiled out of Release, which is the build everybody runs. So a package
+     * that refused to grow, or a Steam that never handed us package 0, looked
+     * from outside exactly like a working install whose manifests do nothing:
+     * no error, no dialog, nothing in any file. That ambiguity is what this
+     * removes, and it is the whole reason the failure went unexplained.
+     */
+    std::string g_licenseStatus = "not attempted yet";
 
     constexpr PackageId_t kInjectedPackageId = 0;
     constexpr uint64_t kInjectedPkgAccessToken = 10660652434190618804ull;
@@ -72,9 +85,45 @@ namespace {
         return oCUtlMemoryGrow(pVec, grow_size);
     }
 
+    /*
+     * Grow the package's app list until it can really hold `need` entries.
+     *
+     * Valve's Grow() is advisory. It enlarges by a policy of its own, roughly
+     * doubling, rather than by exactly what was asked, so one call from a small
+     * base can come back short: measured here as 196 growing to 454 when 131
+     * were requested. Both callers used to notice that and give up.
+     *
+     * Giving up is the worst available outcome, because this list is
+     * all-or-nothing. One short allocation means no depots are injected, so
+     * every manifest stops working at once and the library looks untouched. The
+     * user sees nothing appear and nothing explaining why.
+     *
+     * Looping is bounded by progress rather than by a count: a call that does
+     * not enlarge the allocation will not enlarge it next time either, so this
+     * stops instead of spinning. The attempt cap is a second belt against a
+     * Grow that reports success while doing nothing.
+     */
+    bool EnsureRoom(CUtlVector<AppId_t>* pVec, uint32 need) {
+        if (!oCUtlMemoryGrow) {
+            LOG_PACKAGE_WARN("CUtlMemoryGrow: oCUtlMemoryGrow not ready, cannot grow");
+            return false;
+        }
+        const bool ok = HookUtil::EnsureRoom(
+            need,
+            [pVec] { return pVec->m_Memory.m_nAllocationCount; },
+            [pVec](int by) { return oCUtlMemoryGrow(pVec, by) != nullptr; });
+        if (!ok) {
+            LOG_PACKAGE_WARN("EnsureRoom: stopped at {} of {} needed",
+                             pVec->m_Memory.m_nAllocationCount, need);
+        }
+        return ok;
+    }
+
     bool InitFakeLicenseOnce(PackageInfo* pPkg) {
         // check package status before injecting
         if (pPkg->Status != EPackageStatus::Available) {
+            g_licenseStatus = "Steam's package 0 is not available (status " +
+                              std::to_string(static_cast<int>(pPkg->Status)) + ")";
             LOG_PACKAGE_WARN("InitFakeLicenseOnce: package status is not Available ({}), skipping injection", static_cast<int>(pPkg->Status));
             return false;
         }
@@ -85,7 +134,9 @@ namespace {
             uint32 oldSize = pPkg->AppIdVec.m_Size;
             uint32 numToAdd = static_cast<uint32>(appIds.size());
             LOG_PACKAGE_INFO("InitFakeLicense(PackageId={}): adding {} apps, oldSize={}", kInjectedPackageId, numToAdd, oldSize);
-            if (!CUtlMemoryGrowWrap(&pPkg->AppIdVec, numToAdd)) {
+            if (!EnsureRoom(&pPkg->AppIdVec, oldSize + numToAdd)) {
+                g_licenseStatus = "could not grow the package app list to hold " +
+                                  std::to_string(oldSize + numToAdd) + " depots";
                 LOG_PACKAGE_WARN("InitFakeLicense(PackageId={}): failed to grow AppId vector", kInjectedPackageId);
                 return false;
             }
@@ -94,6 +145,12 @@ namespace {
             // measured on Linux as m_Size=196 / allocCount=454 after adding 131,
             // with Steam still reporting ExistInPackageNums=0 for every one.
             if (pPkg->AppIdVec.m_Memory.m_nAllocationCount < oldSize + numToAdd) {
+                // The one that silently costs every manifest at once: nothing
+                // is injected, so nothing is owned, so nothing appears.
+                g_licenseStatus = "package too small: room for " +
+                    std::to_string(pPkg->AppIdVec.m_Memory.m_nAllocationCount) +
+                    ", needs " + std::to_string(oldSize + numToAdd) +
+                    " (no depots injected)";
                 LOG_PACKAGE_WARN("InitFakeLicense: allocation {} too small for {} entries, skipping",
                                  pPkg->AppIdVec.m_Memory.m_nAllocationCount, oldSize + numToAdd);
                 return false;
@@ -103,6 +160,7 @@ namespace {
             pPkg->AppIdVec.m_Size = oldSize + numToAdd;
         }
 
+        g_licenseStatus = std::to_string(appIds.size()) + " depots injected";
         g_licenseInitialized = true;
         g_licenseRefreshPending = true;
         TryProcessPendingLicenseRefresh();
@@ -182,6 +240,8 @@ namespace Hooks_Package {
         UNHOOK_END();
     }
 
+    std::string LicenseStatus() { return g_licenseStatus; }
+
     void NotifyLicenseChanged() {
         PackageInfo* pPkg = g_pInjectedPackageInfo;
         if (!pPkg) {
@@ -208,7 +268,8 @@ namespace Hooks_Package {
         LOG_PACKAGE_DEBUG("NotifyLicenseChanged: processing {} additions", additions.size());
         if (!additions.empty()) {
             uint32_t oldSize = pPkg->AppIdVec.m_Size;
-            if (CUtlMemoryGrowWrap(&pPkg->AppIdVec, additions.size())) {
+            if (EnsureRoom(&pPkg->AppIdVec,
+                           oldSize + static_cast<uint32>(additions.size()))) {
                 // An applied addition invalidates any UI removal that has not
                 // reached the UI thread yet.
                 for (AppId_t id : additions)
@@ -218,6 +279,9 @@ namespace Hooks_Package {
                 // and can return success without reaching the requested size,
                 // so writing oldSize+N unchecked would run past the allocation.
                 if (pPkg->AppIdVec.m_Memory.m_nAllocationCount < oldSize + additions.size()) {
+                    g_licenseStatus = "a newly added manifest did not fit: room for " +
+                        std::to_string(pPkg->AppIdVec.m_Memory.m_nAllocationCount) +
+                        ", needs " + std::to_string(oldSize + additions.size());
                     LOG_PACKAGE_WARN("NotifyLicenseChanged: allocation {} too small for {} entries, skipping",
                                      pPkg->AppIdVec.m_Memory.m_nAllocationCount,
                                      oldSize + additions.size());
@@ -232,6 +296,8 @@ namespace Hooks_Package {
                 // the count, so the new ids are invisible until m_Size catches up.
                 pPkg->AppIdVec.m_Size = oldSize + static_cast<uint32_t>(additions.size());
             }else {
+                g_licenseStatus = "could not grow the package for " +
+                                  std::to_string(additions.size()) + " newly added depots";
                 LOG_PACKAGE_WARN("NotifyLicenseChanged: failed to grow AppId vector for additions");
             }
         }
@@ -246,6 +312,8 @@ namespace Hooks_Package {
             LOG_PACKAGE_WARN("NotifyLicenseChanged: failed to mark license as changed");
             return;
         }
+        g_licenseStatus = std::to_string(addedIds.size()) + " added live, " +
+                          std::to_string(removedCount) + " removed";
         LOG_PACKAGE_INFO("NotifyLicenseChanged: {} added, {} removed", addedIds.size(), removedCount);
 
         // Queue UI removals for the main-thread RunFrame hook to drain.

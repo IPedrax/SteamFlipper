@@ -47,6 +47,13 @@ namespace Config {
     bool GetStatsEnableApi();
     bool GetUpdateEnabled();
     bool GetUpdateAutoInstall();
+
+    // [keys].auto_sync - write the manifests' depot keys into config.vdf on
+    // startup, unasked. Off by default, and opt-in for the same reason
+    // [update].auto_install is: Steam has to close for the write to survive,
+    // because it rewrites config.vdf on the way out and would discard anything
+    // put there underneath it.
+    bool GetKeysAutoSync();
     std::string GetUpdateRepo();
 
     // [fixes].token - a lua.tools bearer token. The fix catalog is readable
@@ -113,6 +120,10 @@ namespace Config {
     // a reason -- it closes the client a minute after it opened, which is only
     // acceptable to someone who chose it.
     inline bool updateAutoInstall = false;
+
+    // [keys].auto_sync - see GetKeysAutoSync above. Off by default: turning it
+    // on means a startup can close the client to write the keys.
+    inline bool keysAutoSync = false;
 
     // [update].repo - the SteamFlipper source checkout this install was built
     // from. Not derivable: the installed module sits under ~/.local/lib and

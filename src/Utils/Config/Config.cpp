@@ -20,6 +20,7 @@ namespace {
         bool statsEnableApi = true;
         bool updateEnabled = true;
         bool updateAutoInstall = false;
+        bool keysAutoSync = false;
         std::string updateRepo;
         std::string fixesToken;
         std::string fixesRefreshToken;
@@ -65,6 +66,7 @@ namespace {
         statsEnableApi         = snapshot.statsEnableApi;
         updateEnabled          = snapshot.updateEnabled;
         updateAutoInstall      = snapshot.updateAutoInstall;
+        keysAutoSync           = snapshot.keysAutoSync;
         updateRepo             = snapshot.updateRepo;
         fixesToken             = snapshot.fixesToken;
         fixesRefreshToken      = snapshot.fixesRefreshToken;
@@ -173,6 +175,11 @@ namespace {
             }
 
             // [update]
+            if (auto keys = tbl["keys"].as_table()) {
+                if (auto val = (*keys)["auto_sync"].value<bool>()) {
+                    snapshot.keysAutoSync = *val;
+                }
+            }
             if (auto update = tbl["update"].as_table()) {
                 if (auto val = (*update)["enabled"].value<bool>()) {
                     snapshot.updateEnabled = *val;
@@ -344,6 +351,11 @@ namespace {
     bool GetUpdateAutoInstall() {
         std::lock_guard lock(g_mutex);
         return updateAutoInstall;
+    }
+
+    bool GetKeysAutoSync() {
+        std::lock_guard lock(g_mutex);
+        return keysAutoSync;
     }
 
     std::string GetUpdateRepo() {
