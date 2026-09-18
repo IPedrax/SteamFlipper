@@ -573,6 +573,7 @@ namespace {
         // Here rather than in a dialog, so the one condition that used to
         // interrupt startup is still answerable when somebody asks "is this
         // working". Ownership and depot decryption do not depend on it.
+        j += row("Live refresh", Hooks_Package::RefreshStatus(), false);
         j += row("IPC spec", IPCLoader::Status(), false);
         j += row("API", "127.0.0.1:" + std::to_string(kApiPort), false);
         j += "]}";

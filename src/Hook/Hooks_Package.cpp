@@ -30,6 +30,9 @@ namespace {
      */
     std::string g_licenseStatus = "not attempted yet";
 
+    // Whether the library actually redraws when a manifest is added live.
+    std::string g_refreshStatus = "not attempted yet";
+
     constexpr PackageId_t kInjectedPackageId = 0;
     constexpr uint64_t kInjectedPkgAccessToken = 10660652434190618804ull;
 
@@ -59,13 +62,28 @@ namespace {
     }
 #endif
 
+    /*
+     * Tell Steam the injected package changed, so the library redraws.
+     *
+     * The two functions this needs have no VProf scope and no symbol, so the
+     * generator cannot derive them and they have to be pinned per build. On a
+     * build where that pin is missing they resolve to nothing and this returns
+     * early, which is quiet and easily mistaken for something larger: the
+     * depots are injected and owned, and a manifest added while Steam is
+     * running simply never appears until the client restarts. Reported as
+     * issue #2, and the reason the state is recorded rather than only logged.
+     */
     bool MarkLicenseAsChangedAndProcessUpdates() {
         if (!g_pCUser || !oMarkLicenseAsChanged || !oProcessPendingLicenseUpdates) {
+            g_refreshStatus = !g_pCUser
+                ? "waiting for Steam to ask about ownership"
+                : "unavailable on this Steam build (no pattern for it)";
             LOG_PACKAGE_WARN("MarkLicenseAsChangedAndProcessUpdates: dependencies not ready, skipping");
             return false;
         }
         oMarkLicenseAsChanged(g_pCUser, kInjectedPackageId, true);
         oProcessPendingLicenseUpdates(g_pCUser);
+        g_refreshStatus = "working";
         LOG_PACKAGE_DEBUG("MarkLicenseAsChangedAndProcessUpdates: marked package {} as changed and processed updates", kInjectedPackageId);
         return true;
     }
@@ -241,6 +259,7 @@ namespace Hooks_Package {
     }
 
     std::string LicenseStatus() { return g_licenseStatus; }
+    std::string RefreshStatus() { return g_refreshStatus; }
 
     void NotifyLicenseChanged() {
         PackageInfo* pPkg = g_pInjectedPackageInfo;

@@ -91,6 +91,24 @@ VERIFIED = {
         "MarkLicenseAsChanged":         0x188C700,
         "ProcessPendingLicenseUpdates": 0x188C950,
     },
+    # The same two addresses, and that is the finding rather than a copy/paste:
+    # every function this generator derives for both builds lands at an
+    # identical RVA, so the pair that cannot be derived sits where it did too.
+    #
+    # Checked rather than assumed, because a wrong address here crashes the
+    # client. Each one carries the previous build's byte signature at that
+    # exact address, starts on an alignment pad the way a function entry does,
+    # and is reached by real call sites: five for MarkLicenseAsChanged, two for
+    # ProcessPendingLicenseUpdates. An address that were merely plausible would
+    # fail the last of those, which is what kept FillInAppOverview out below.
+    #
+    # Without these the injection still happens and then goes nowhere: Steam is
+    # never told the licence changed, so a manifest added while the client is
+    # running does not appear until it restarts. Reported as issue #2.
+    "237495b4bf3d5ed8fb1fabfad86154428fb2e6f47b8169bcb154f6e25bcc1abd": {
+        "MarkLicenseAsChanged":         0x188C700,
+        "ProcessPendingLicenseUpdates": 0x188C950,
+    },
     # steamui.so
     "b3d2a355684ada5e34a4faba103324660ce479597d0b18638c9680cd0c798b18": {
         # The live cdecl body. GCC also emits regparm/constprop clones of

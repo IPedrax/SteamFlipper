@@ -19,4 +19,8 @@ namespace Hooks_Package {
     // the depots is indistinguishable from an install that simply does nothing.
     std::string LicenseStatus();
 
+    // Whether Steam can be told the injected package changed. When it cannot,
+    // a manifest added while the client runs does not appear until a restart.
+    std::string RefreshStatus();
+
 }
