@@ -1,4 +1,5 @@
 #include "Hooks_Package.h"
+#include "Hooks_Decryption.h"
 #include "EnsureRoom.h"
 #include "HookMacros.h"
 #include "Hooks_SteamUI.h"
@@ -211,6 +212,9 @@ namespace {
 
         bool result = oCheckAppOwnership(pObj, appId, pOwn);
         TryInitFakeLicenseOnce();
+        // The depot-key hook needs the same singleton and the same "not built
+        // yet at install time" retry, so it rides along here.
+        Hooks_Decryption::TryInstallLate();
 
         if (LuaConfig::HasDepot(appId,false)) {
             if (result && pOwn->ExistInPackageNums > 1) {
