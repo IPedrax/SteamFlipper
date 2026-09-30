@@ -271,9 +271,9 @@ Build `Debug` for logs. `Release` compiles logging out entirely:
 SF_BUILD_TYPE=Debug ./tools/install_linux.sh
 ```
 
-`main.log` is written next to the module, not inside Steam:
-`~/.local/lib/steamflipper/32/steamflipper/main.log`. Per-category logs go to
-`~/.local/share/Steam/steamflipper/*.log`.
+`main.log` is written under Steam, at
+`~/.local/share/Steam/ubuntu12_32/steamflipper/main.log`. Per-category logs go
+to `~/.local/share/Steam/steamflipper/*.log`.
 
 A Release build has neither, so an absent log file says nothing about whether
 the module loaded. For that, ask the module itself:

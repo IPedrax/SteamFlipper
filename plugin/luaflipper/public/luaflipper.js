@@ -6,13 +6,19 @@
  * and Library do, rather than floating a modal over them.
  *
  * Steam ships this UI as a React app with hashed CSS class names that change
- * between client builds, so nothing here matches on a hashed class. What it
- * does rely on is the unhashed half of those class names, which has been stable
- * across builds:
+ * between client builds. It used to pair each hash with an unhashed half that
+ * did survive updates, and this relied on those:
  *
  *   SuperNavBar / MenuButton     the nav and its buttons
  *   ContentFrame                 the region below the nav
  *   LocalContentContainer        the routed page inside it
+ *
+ * The September 2026 client dropped them. Every one of those selectors now
+ * matches nothing, and the nav is plain divs whose only class is a hash like
+ * _19axKcqYRuaJ8vdYKYmtTQ. So they are tried first and then given up on: the
+ * nav is found by the words on its buttons, and the content region by its
+ * shape beside the nav. Labels and layout are what actually survive a rebuild,
+ * and matching this release's hashes would buy exactly one release.
  *
  * Theme compatibility: custom themes restyle Steam by overriding its own
  * classes, so this deliberately avoids a private palette. Backgrounds are
@@ -84,6 +90,34 @@
    * Locate the nav. Returns {container, wrapper, sample}: an existing button to
    * copy, the per-button wrapper around it, and the row both sit in.
    */
+  /**
+   * Where a page is mounted.
+   *
+   * ContentFrame went the way of the rest of the class names. What has not
+   * changed is the shape: the routed content is a large box beside the nav's
+   * own branch, so climb from the nav and take the first big sibling that does
+   * not contain it. Found this way it needs no class name to stay true.
+   */
+  function findContentFrame() {
+    var direct = document.querySelector(".ContentFrame");
+    if (direct) return direct;
+
+    var nav = findNav();
+    if (!nav) return null;
+
+    for (var n = nav.container; n && n.parentElement; n = n.parentElement) {
+      var kids = n.parentElement.children;
+      for (var i = 0; i < kids.length; i++) {
+        var s = kids[i];
+        if (s === n || s.contains(nav.sample)) continue;
+        var r = s.getBoundingClientRect();
+        // Big enough to be the content area rather than a toolbar or a gutter.
+        if (r.height > 400 && r.width > 600) return s;
+      }
+    }
+    return null;
+  }
+
   function findNav() {
     // Steam builds the nav from plain <div>s carrying two classes: a hashed one
     // that changes per build, and a stable "MenuButton". Neither is an <a> nor
@@ -96,6 +130,26 @@
     for (var i = 0; i < anchors.length && !sample; i++) {
       var t = (anchors[i].textContent || "").trim().toLowerCase();
       if (NAV_WORDS.indexOf(t) !== -1) sample = anchors[i];
+    }
+    /*
+     * Second pass, over every leaf on the page.
+     *
+     * Steam rebuilt its frontend and the nav is now plain divs whose only
+     * classes are per-build hashes like _19axKcqYRuaJ8vdYKYmtTQ. MenuButton is
+     * gone, and so are ContentFrame, MenuWrapper and the rest, so the narrow
+     * selector above finds nothing on a current client.
+     *
+     * Matching the hashes instead would buy one release. The labels are what
+     * actually survives an update, so when the selectors miss, the words are
+     * the anchor: a leaf that reads STORE sits inside the nav by definition.
+     */
+    if (!sample) {
+      var leaves = document.querySelectorAll("div, span, a");
+      for (var j = 0; j < leaves.length && !sample; j++) {
+        if (leaves[j].children.length) continue;
+        var w = (leaves[j].textContent || "").trim().toLowerCase();
+        if (NAV_WORDS.indexOf(w) !== -1) sample = leaves[j];
+      }
     }
     if (!sample) return null;
 
@@ -907,7 +961,7 @@
     // different app that shares none of that markup. The page still has to go
     // somewhere, so it goes over the top of whatever is there. See
     // deckLauncher for why that is the whole of the port and not a shortcut.
-    var frame = document.querySelector(".ContentFrame") || deckHost();
+    var frame = findContentFrame() || deckHost();
     if (!frame) { log("nowhere to mount a page"); return; }
 
     closePage();
@@ -1083,7 +1137,7 @@
       // the client the launcher exists for. Gated on this rather than on
       // sniffing for the Deck UI: the desktop client never reaches here, so
       // nothing below can affect it.
-      if (!document.querySelector(".ContentFrame")) {
+      if (!findContentFrame()) {
         installDeckLauncher();
         return;
       }

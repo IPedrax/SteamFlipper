@@ -48,6 +48,12 @@ function makeNode(tag) {
       if (p) p.children = p.children.filter((c) => c !== node);
     },
     cloneNode: () => makeNode(tag),
+    // The structural fallbacks need size and a subtree walk.
+    getBoundingClientRect: () => node._rect || { width: 0, height: 0 },
+    contains(other) {
+      for (let n = other; n; n = n.parentElement) if (n === node) return true;
+      return false;
+    },
     get firstElementChild() { return node.children[0] || null; },
   };
   return node;
@@ -64,14 +70,17 @@ function byId(root, id) {
   return null;
 }
 
-function run(kind) {
-  const body = makeNode("body");
+function run(kind, prebuilt) {
+  const body = prebuilt || makeNode("body");
   // Stands in for popup_target, the Deck UI's single root. Hiding it is how
   // the panel gets Steam's browser views out from under itself, and putting
   // it back is the half that matters.
-  const steamRoot = makeNode("div");
-  steamRoot.id = "popup_target";
-  body.appendChild(steamRoot);
+  let steamRoot = byId(body, "popup_target");
+  if (!steamRoot) {
+    steamRoot = makeNode("div");
+    steamRoot.id = "popup_target";
+    body.appendChild(steamRoot);
+  }
   const contentFrame = kind === "desktop" ? makeNode("div") : null;
 
   const document = {
@@ -88,7 +97,17 @@ function run(kind) {
       if (sel === ".ContentFrame") return contentFrame;
       return null;
     },
-    querySelectorAll: () => [],
+    // Enough of a selector engine for the fallbacks: they ask for every
+    // div/span/a and filter by text themselves.
+    querySelectorAll(sel) {
+      if (!/div|span|a/.test(sel)) return [];
+      const out = [];
+      (function walk(n) {
+        out.push(n);
+        n.children.forEach(walk);
+      })(body);
+      return out;
+    },
   };
 
   const timers = [];
@@ -131,6 +150,43 @@ console.log("The Deck UI");
   check(btn && btn.textContent === "LUAFlipper", "and it says what it is");
   check(byId(body, "luaflipper-deck-host") === null,
         "the panel waits to be asked for, rather than opening over the client");
+}
+
+console.log("A desktop client whose class names were all rebuilt");
+{
+  /*
+   * September 2026: Steam dropped SuperNavBar, MenuButton and ContentFrame, so
+   * every selector this UI used went to zero and the corner launcher appeared
+   * on a client that has a perfectly good nav. The labels and the layout are
+   * what survived, so that is what the fallbacks match on.
+   */
+  const body = makeNode("body");
+  const root = makeNode("div");
+  root.id = "popup_target";
+  body.appendChild(root);
+
+  const navRow = makeNode("div");              // hashed class, no MenuButton
+  const wrapper = makeNode("div");
+  const label = makeNode("div");
+  label.textContent = "STORE";
+  wrapper.appendChild(label);
+  navRow.appendChild(wrapper);
+
+  const content = makeNode("div");             // the big box beside the nav
+  content._rect = { width: 1920, height: 964 };
+
+  const shell = makeNode("div");
+  shell.appendChild(navRow);
+  shell.appendChild(content);
+  root.appendChild(shell);
+
+  // "rebuilt": no .ContentFrame, exactly like the client that broke.
+  run("rebuilt", body);
+
+  check(byId(body, "luaflipper-tab") !== null,
+        "the tab is found by the word on a stock button, not by a class");
+  check(byId(body, "luaflipper-deck-btn") === null,
+        "and the Deck launcher stays away, because this client has a nav");
 }
 
 console.log("Opening and closing the panel");

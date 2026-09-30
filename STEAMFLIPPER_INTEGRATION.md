@@ -38,7 +38,7 @@ yourself.
 | Depot decryption keys | `<Steam>/config/config.vdf` → `depots` block | **your app** (see §4) |
 | Module config | `<Steam>/steamflipper.toml` | user / your app |
 | Category logs (Debug builds only) | `<Steam>/steamflipper/*.log` | SteamFlipper |
-| Main log (Debug builds only) | `~/.local/lib/steamflipper/32/steamflipper/main.log` | SteamFlipper |
+| Main log (Debug builds only) | `<Steam>/ubuntu12_32/steamflipper/main.log` | SteamFlipper |
 | Hook addresses | `<Steam>/ubuntu12_32/steamflipper/pattern/` | installer |
 | The module | `~/.local/lib/steamflipper/32/SteamFlipper.so` | installer |
 | Injection point | `<Steam>/ubuntu12_32/libXtst.so.6` | installer |
