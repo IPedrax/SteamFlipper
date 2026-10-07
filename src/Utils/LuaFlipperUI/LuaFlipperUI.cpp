@@ -3130,6 +3130,28 @@ void AutoUpdateThread() {
     std::this_thread::sleep_for(std::chrono::seconds(45));
 
     /*
+     * Put back the depot manifests Steam ate.
+     *
+     * Steam deletes a depot's manifest from depotcache once it has installed
+     * that depot. Owning the game that is free, because Steam asks Valve for
+     * it again; with injected ownership Valve refuses, so the next update
+     * check fails as "no internet connection" and the game will not download
+     * until someone restores the file by hand.
+     *
+     * Ahead of the game guard because it copies files and closes nothing, so
+     * unlike the two jobs below it costs a running game nothing.
+     */
+    if (const std::string repo = Config::GetUpdateRepo(); !repo.empty()) {
+        const std::string cmd =
+            "env -u LD_PRELOAD -u LD_LIBRARY_PATH python3 " +
+            AppUpdater::ShellQuote(repo + "/tools/keep_manifests.py") +
+            " --steam " + AppUpdater::ShellQuote(g_steamPath) +
+            " >/dev/null 2>&1";
+        if (std::system(cmd.c_str()) != 0)
+            LOG_WARN("KeepManifests: helper did not run cleanly");
+    }
+
+    /*
      * The game guard comes first because it covers both jobs below, not just
      * the update. A game means Steam is doing the thing it exists for, and
      * neither closing it for a rebuild nor closing it to write depot keys is

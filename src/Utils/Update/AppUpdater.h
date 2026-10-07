@@ -103,6 +103,11 @@ namespace AppUpdater {
     // network, so it belongs on a worker thread.
     PullResult PullSource();
 
+    // A path going into a /bin/sh command line. Exported because callers that
+    // launch their own helpers need the same quoting, and two spellings of it
+    // is one spelling too many.
+    std::string ShellQuote(const std::string& s);
+
     // Hand the rest of the update to a detached helper: close Steam, rebuild,
     // reinstall, start Steam again. Returns false only when it could not be
     // launched -- after that this process is going to be killed by the very

@@ -148,17 +148,6 @@ namespace {
         return s;
     }
 
-    // A path going into a /bin/sh command line. Single quotes disable every
-    // other expansion, so the only character needing work is the quote itself.
-    std::string ShellQuote(const std::string& s)
-    {
-        std::string q = "'";
-        for (const char c : s) {
-            if (c == '\'') q += "'\\''";
-            else           q += c;
-        }
-        return q + "'";
-    }
 
     /*
      * Run one git command in `repo` and capture its combined output.
@@ -426,6 +415,18 @@ static bool LaunchHelper(const char* script, const std::string& stateDir,
     }
     LOG_INFO("AppUpdater: {} helper launched, Steam will close", what);
     return true;
+}
+
+// A path going into a /bin/sh command line. Single quotes disable every
+// other expansion, so the only character needing work is the quote itself.
+std::string ShellQuote(const std::string& s)
+{
+    std::string q = "'";
+    for (const char c : s) {
+        if (c == '\'') q += "'\\''";
+        else           q += c;
+    }
+    return q + "'";
 }
 
 bool LaunchAutoUpdate(const std::string& stateDir)

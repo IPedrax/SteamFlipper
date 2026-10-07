@@ -165,6 +165,37 @@
     return { container: wrapper.parentElement, wrapper: wrapper, sample: sample };
   }
 
+  /**
+   * Click one of Steam's own nav buttons, by the word on it.
+   *
+   * Unlocker and Workshop are not pages of ours: they are Steam's store and
+   * community, and the way to open one is to click the button a person would
+   * click. That used to be a .SuperNavBar .MenuButton lookup, which matches
+   * nothing since the class names were rebuilt, so both pages stopped opening
+   * while every local page carried on working.
+   *
+   * The leaf carrying the label is what gets clicked. React listens at the
+   * root and the event bubbles, so the handler fires wherever it is attached.
+   */
+  function clickStockTab(word) {
+    var buttons = document.querySelectorAll(".SuperNavBar .MenuButton");
+    for (var i = 0; i < buttons.length; i++) {
+      if ((buttons[i].textContent || "").trim().toLowerCase() === word) {
+        buttons[i].click();
+        return true;
+      }
+    }
+    var leaves = document.querySelectorAll("div, span, a");
+    for (var j = 0; j < leaves.length; j++) {
+      if (leaves[j].children.length) continue;
+      if ((leaves[j].textContent || "").trim().toLowerCase() !== word) continue;
+      leaves[j].click();
+      return true;
+    }
+    log("no stock nav button reading " + word);
+    return false;
+  }
+
   // Counted so the "no nav here" case can be said once, rather than on every
   // one of the thousands of mutations that re-run this.
   var navMisses = 0;
@@ -714,6 +745,19 @@
   function hideStock() {
     restoreStock();
     var els = document.querySelectorAll(STOCK_VIEWS);
+    /*
+     * Those two class names went with the rest in the September 2026 rebuild,
+     * so on a current client this matches nothing and Steam's own page stays
+     * visible under ours.
+     *
+     * What has to stand aside is whatever the content region is currently
+     * showing, which is precisely its children. Our page is appended after
+     * this runs, so it is never one of them.
+     */
+    if (!els.length) {
+      var frame = findContentFrame();
+      els = frame ? frame.children : [];
+    }
     for (var i = 0; i < els.length; i++) {
       hiddenStock.push({ el: els[i], display: els[i].style.display });
       els[i].style.display = "none";
@@ -981,12 +1025,9 @@
       currentPage = page;
       takeHighlight();          // keep our tab lit, not Steam's
       setMode(page, true, function () {
-        var b = document.querySelectorAll(".SuperNavBar .MenuButton");
         selfNav = true;
         try {
-          for (var i = 0; i < b.length; i++) {
-            if (b[i].textContent.trim().toLowerCase() === stock) { b[i].click(); break; }
-          }
+          clickStockTab(stock);
         } finally {
           selfNav = false;
         }
