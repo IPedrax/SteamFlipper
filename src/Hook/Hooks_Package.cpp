@@ -40,9 +40,15 @@ namespace {
 #ifndef _WIN32
     // CPackageInfoCache is a subobject of a larger singleton rather than a
     // global in its own right. Steam's own call sites do:
-    //     mov eax,[<global>] ; add eax,0xC40 ; call GetPackageInfo
-    // so the cache is at +0xC40 of whatever that global points at.
-    constexpr uintptr_t kPackageInfoCacheOffset = 0xC40;
+    //     mov eax,[<global>] ; add eax,<offset> ; call GetPackageInfo
+    // so the cache sits <offset> bytes into whatever that global points at.
+    //
+    // The offset is per Steam build and is read from that build's pattern file.
+    // It was a constant, 0xC40, and Steam's next update made it 0xF78: the
+    // module handed GetPackageInfo a pointer 0x338 bytes short of the cache and
+    // segfaulted inside it on every start. Zero means the pattern file does not
+    // say, and an unknown offset is never guessed at.
+    uintptr_t g_packageInfoCacheOffset = 0;
 
     // Address of that global, resolved from the pattern file.
     void** g_ppPackageInfoCacheOwner = nullptr;
@@ -57,7 +63,7 @@ namespace {
         if (g_pCPackageInfo || !g_ppPackageInfoCacheOwner) return;
         void* owner = *g_ppPackageInfoCacheOwner;
         if (!owner) return;   // singleton not constructed yet; retry next call
-        g_pCPackageInfo = static_cast<char*>(owner) + kPackageInfoCacheOffset;
+        g_pCPackageInfo = static_cast<char*>(owner) + g_packageInfoCacheOffset;
         LOG_PACKAGE_DEBUG("Resolved CPackageInfoCache at {} (owner {})",
                           g_pCPackageInfo, owner);
     }
@@ -249,6 +255,20 @@ namespace Hooks_Package {
             PatternLoader::FindPattern(client_hModule, "CPackageInfoCacheGlobal"));
         if (!g_ppPackageInfoCacheOwner)
             LOG_PACKAGE_WARN("CPackageInfoCacheGlobal unavailable; fake license disabled");
+
+        g_packageInfoCacheOffset =
+            PatternLoader::FindFieldOffset(client_hModule, "CPackageInfoCacheGlobal");
+        if (g_ppPackageInfoCacheOwner && g_packageInfoCacheOffset == 0) {
+            // A pattern file written before the offset was recorded. Using the
+            // old constant here is the crash, so ownership injection stays off
+            // until the file is regenerated, and the status page says why. The
+            // installer rewrites it on every run, so this is a re-install away.
+            g_ppPackageInfoCacheOwner = nullptr;
+            g_licenseStatus = "off: this build's pattern file has no package-cache "
+                              "offset (re-run tools/install_linux.sh)";
+            LOG_PACKAGE_WARN("CPackageInfoCacheGlobal has no field_offset in the "
+                             "pattern file; fake license disabled rather than guessing");
+        }
 #endif
 
         HOOK_BEGIN();

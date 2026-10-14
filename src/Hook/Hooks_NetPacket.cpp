@@ -9,6 +9,8 @@
 #include "Utils/Support/FnvHash.h"
 #include "Utils/CloudRedirect/CloudRedirectHost.h"
 #include "Utils/CloudSaves/CloudSaves.h"
+#include "NetPacketLayout.h"
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -59,6 +61,53 @@ namespace {
     }
 
 
+    // ── Where a CNetPacket keeps its data ───────────────────────
+    //
+    // Not a constant, because Valve moved it. See NetPacketLayout.h for the two
+    // layouts and for what the old assumption cost: a segfault on the first
+    // packet of every session.
+    //
+    // Packed as (data offset << 16) | size offset. Zero means "not known", and
+    // since offset zero is the connection handle, never a valid answer.
+    std::atomic<uint32_t> g_PktLayout{0};
+    std::atomic<uint32_t> g_PktRefused{0};   // packets that fit no known layout
+
+    // Every read and write of a packet's data goes through these two, and they
+    // are only valid once ResolvePacketLayout() has returned true for a packet
+    // of this build. hkRecvPkt guarantees that before touching anything.
+    inline uint8*& PktData(CNetPacket* p) {
+        const uint32_t l = g_PktLayout.load(std::memory_order_relaxed);
+        return *reinterpret_cast<uint8**>(reinterpret_cast<char*>(p) + (l >> 16));
+    }
+    inline uint32& PktSize(CNetPacket* p) {
+        const uint32_t l = g_PktLayout.load(std::memory_order_relaxed);
+        return *reinterpret_cast<uint32*>(reinterpret_cast<char*>(p) + (l & 0xFFFFu));
+    }
+
+    // Work out the layout from a live packet, once, and remember it.
+    //
+    // Returns false for a packet that matches no known layout, and that packet
+    // must then be passed through unread: the alternative is dereferencing
+    // whatever happens to sit where a pointer used to.
+    inline bool ResolvePacketLayout(CNetPacket* p) {
+        if (g_PktLayout.load(std::memory_order_relaxed) != 0) return true;
+        if (!p) return false;
+
+        uint32_t words[NetPacketLayout::kWords];
+        memcpy(words, p, sizeof(words));
+
+        NetPacketLayout::Offsets o;
+        if (!NetPacketLayout::Detect(words, o)) {
+            g_PktRefused.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        g_PktLayout.store(static_cast<uint32_t>(o.data << 16 | o.size),
+                          std::memory_order_relaxed);
+        LOG_INFO("NetPacket: layout recognised, data at +0x{:X}, size at +0x{:X}",
+                 o.data, o.size);
+        return true;
+    }
+
     // ── Packet layout ──────────────────────────────────────────
     inline bool UnpackRaw(const uint8* data, uint32 size,
                           EMsg& eMsg, const uint8*& pHdr, uint32& cbHdr,
@@ -95,15 +144,15 @@ namespace {
         if (newSize > sizeof(g_RecvPacketPool[0])) return;
 
         uint8* buf = g_RecvPacketPool[g_RecvPacketPoolIdx];
-        const MsgHdr* orig = reinterpret_cast<const MsgHdr*>(p->m_pubData);
+        const MsgHdr* orig = reinterpret_cast<const MsgHdr*>(PktData(p));
         MsgHdr* out = reinterpret_cast<MsgHdr*>(buf);
         out->eMsg         = orig->eMsg;
         out->headerLength = cbNewHdr;
         memcpy(buf + sizeof(MsgHdr), pNewHdr, cbNewHdr);
         if (cbNewBody)
             memcpy(buf + sizeof(MsgHdr) + cbNewHdr, pNewBody, cbNewBody);
-        p->m_pubData = buf;
-        p->m_cubData = newSize;
+        PktData(p) = buf;
+        PktSize(p) = newSize;
 
         g_RecvPacketPoolIdx = (g_RecvPacketPoolIdx + 1) % kPacketPoolSize;
     }
@@ -948,13 +997,13 @@ namespace Hooks_NetPacket_RichPresence {
         if (!g_InjectPending || g_cbInjectPkt == 0) return;
         g_InjectPending = false;
 
-        uint8* origData = pCarrier->m_pubData;
-        uint32 origSize = pCarrier->m_cubData;
-        pCarrier->m_pubData = g_InjectPkt;
-        pCarrier->m_cubData = g_cbInjectPkt;
+        uint8* origData = PktData(pCarrier);
+        uint32 origSize = PktSize(pCarrier);
+        PktData(pCarrier) = g_InjectPkt;
+        PktSize(pCarrier) = g_cbInjectPkt;
         invokeOriginal(pThis, pCarrier);
-        pCarrier->m_pubData = origData;
-        pCarrier->m_cubData = origSize;
+        PktData(pCarrier) = origData;
+        PktSize(pCarrier) = origSize;
         LOG_RICHPRESENCE_INFO("Delivered manufactured self-PersonaState ({} bytes)", g_cbInjectPkt);
     }
 
@@ -1190,13 +1239,13 @@ namespace Hooks_NetPacket_Cloud {
                 g_pending.pop_front();
             }
 
-            uint8* origData = pCarrier->m_pubData;
-            uint32 origSize = pCarrier->m_cubData;
-            pCarrier->m_pubData = pkt.data();
-            pCarrier->m_cubData = static_cast<uint32>(pkt.size());
+            uint8* origData = PktData(pCarrier);
+            uint32 origSize = PktSize(pCarrier);
+            PktData(pCarrier) = pkt.data();
+            PktSize(pCarrier) = static_cast<uint32>(pkt.size());
             invokeOriginal(pThis, pCarrier);
-            pCarrier->m_pubData = origData;
-            pCarrier->m_cubData = origSize;
+            PktData(pCarrier) = origData;
+            PktSize(pCarrier) = origSize;
             LOG_NETPACKET_DEBUG("Cloud: delivered {}-byte response", pkt.size());
         }
     }
@@ -1285,13 +1334,13 @@ namespace Hooks_NetPacket_LegacyKey {
                 g_pending.pop_front();
             }
 
-            uint8* origData = pCarrier->m_pubData;
-            uint32 origSize = pCarrier->m_cubData;
-            pCarrier->m_pubData = pkt.data();
-            pCarrier->m_cubData = static_cast<uint32>(pkt.size());
+            uint8* origData = PktData(pCarrier);
+            uint32 origSize = PktSize(pCarrier);
+            PktData(pCarrier) = pkt.data();
+            PktSize(pCarrier) = static_cast<uint32>(pkt.size());
             invokeOriginal(pThis, pCarrier);
-            pCarrier->m_pubData = origData;
-            pCarrier->m_cubData = origSize;
+            PktData(pCarrier) = origData;
+            PktSize(pCarrier) = origSize;
             LOG_NETPACKET_DEBUG("LegacyKey: delivered {}-byte response", pkt.size());
         }
     }
@@ -1515,6 +1564,14 @@ namespace {
 
     HOOK_FUNC(RecvPkt, void*, void* pThis, CNetPacket* pPacket)
     {
+        // First, before any of the code below reads or writes a field. A packet
+        // whose layout is not recognised goes straight to Steam untouched, which
+        // costs the features that rewrite incoming messages and nothing else.
+        // Reading it anyway is what crashed every start after Steam moved the
+        // struct.
+        if (!ResolvePacketLayout(pPacket))
+            return oRecvPkt(pThis, pPacket);
+
         Hooks_NetPacket_RichPresence::TryInject(
             pThis, pPacket,
             [](void* pT, CNetPacket* pP) -> bool { return oRecvPkt(pT, pP) != nullptr; });
@@ -1530,7 +1587,7 @@ namespace {
         EMsg eMsg;
         const uint8 *pBody, *pHdr;
         uint32 cbBody, cbHdr;
-        if (UnpackRaw(pPacket->m_pubData, pPacket->m_cubData,
+        if (UnpackRaw(PktData(pPacket), PktSize(pPacket),
                      eMsg, pHdr, cbHdr, pBody, cbBody)) {
             g_ResizedInPlace = false;
             RecvJob(eMsg, pBody, cbBody, pHdr, cbHdr);
@@ -1541,7 +1598,7 @@ namespace {
                     g_NewHdr, g_cbNewHdr,
                     pBody, g_NewBodySize);
             } else if (g_ResizedInPlace) {
-                pPacket->m_cubData = sizeof(MsgHdr) + cbHdr + g_NewBodySize;
+                PktSize(pPacket) = sizeof(MsgHdr) + cbHdr + g_NewBodySize;
             } else if (g_NeedReplaceHdr || g_NeedReplaceBody) {
                 ReplaceRecvPacket(pPacket,
                     g_NeedReplaceHdr  ? g_NewHdr  : pHdr,
@@ -1558,6 +1615,23 @@ namespace {
 
 
 namespace Hooks_NetPacket {
+    std::string PacketLayoutStatus() {
+        const uint32_t l = g_PktLayout.load(std::memory_order_relaxed);
+        if (l != 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "recognised, data at +0x%X",
+                     static_cast<unsigned>(l >> 16));
+            return buf;
+        }
+        const uint32_t refused = g_PktRefused.load(std::memory_order_relaxed);
+        if (refused == 0) return "no packet seen yet";
+        // Said plainly, because this is the state that used to be a crash: the
+        // client is running, ownership and depots are unaffected, and the
+        // features that rewrite packets are off until the layout is taught.
+        return "UNRECOGNISED (" + std::to_string(refused) +
+               " packets passed through untouched, packet rewrites off)";
+    }
+
     void Install() {
         RESOLVE_C(PchMsgNameFromEMsg);
         HOOK_BEGIN();

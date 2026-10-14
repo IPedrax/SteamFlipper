@@ -38,6 +38,7 @@ struct PatternEntry {
     std::string name;
     uintptr_t   rva = 0;   // 0 = not present in file
     std::string sig;        // empty = not present in file
+    uintptr_t   fieldOffset = 0;   // 0 = not present in file; see FindFieldOffset
 };
 
 // key = Fnv1aHash(funcName)
@@ -131,6 +132,10 @@ static PatternMap TableToPatternMap(const toml::table& tbl)
             }
         }
         if (auto v = sub["sig"].value<std::string>()) entry.sig = *v;
+        if (auto v = sub["field_offset"].value<std::string>()) {
+            if (const auto off = SFPlatform::Numbers::ParseHexUInt64(*v))
+                entry.fieldOffset = static_cast<uintptr_t>(*off);
+        }
 
         map[hashKey] = std::move(entry);
     }
@@ -315,6 +320,18 @@ bool Load(SFPlatform::DynamicLibrary::ModuleHandle module, const std::string& dl
     ShowDownloadFailedPopup(dllName, sha, component);
     g_failedModules.insert(module);
     return false;
+}
+
+uintptr_t FindFieldOffset(SFPlatform::DynamicLibrary::ModuleHandle module, const char* funcName)
+{
+    // Quiet on purpose. A pattern file written before this field existed is a
+    // normal state, not a missing function, and the caller is the one who knows
+    // what its absence means. Zero is never a valid answer: offset zero is the
+    // start of the object, which is not a subobject.
+    const auto mapIt = g_moduleMaps.find(module);
+    if (mapIt == g_moduleMaps.end()) return 0;
+    const auto entryIt = mapIt->second.find(Fnv1aHash(funcName));
+    return entryIt == mapIt->second.end() ? 0 : entryIt->second.fieldOffset;
 }
 
 void* FindPattern(SFPlatform::DynamicLibrary::ModuleHandle module, const char* funcName)

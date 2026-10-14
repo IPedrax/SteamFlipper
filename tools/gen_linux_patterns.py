@@ -404,6 +404,11 @@ def main():
         return table[i] if i >= 0 and table[i][0] <= a < table[i][1] else None
 
     found = {}
+    # Per-build structure offsets that sit beside a function's address and
+    # travel with it. Valve moves these between builds exactly as it moves the
+    # functions, and a constant compiled into the module is wrong the moment it
+    # does: 0xC40 became 0xF78 and every start segfaulted inside GetPackageInfo.
+    extras = {}
     for name, scopes in WANTED[component].items():
         hit, used = None, None
         for scope in scopes:
@@ -455,8 +460,12 @@ def main():
                 print(f"  {name:<31} -> 0x{rva:X}  (derived from CheckAppOwnership)",
                       file=sys.stderr)
             if cache_off is not None:
+                # Written into the pattern file, not left for the module to
+                # know. It used to be a constant in Hooks_Package.cpp that this
+                # line asked a human to keep in step, and nobody could.
+                extras["CPackageInfoCacheGlobal"] = cache_off
                 print(f"  {'cache subobject offset':<31} 0x{cache_off:X}  "
-                      f"(must match kPackageInfoCacheOffset in Hooks_Package.cpp)",
+                      f"(recorded in the pattern file as field_offset)",
                       file=sys.stderr)
 
     if component == "steamclient" and "CUtlMemoryGrow" not in found:
@@ -524,8 +533,10 @@ def main():
         lines += [f"[0x{fnv1a(name):08X}]",
                   f'name = "{name}"',
                   f'rva = "0x{va:X}"',
-                  f'sig = "{make_sig(data, secs, va)}"',
-                  ""]
+                  f'sig = "{make_sig(data, secs, va)}"']
+        if name in extras:
+            lines.append(f'field_offset = "0x{extras[name]:X}"')
+        lines.append("")
     text = "\n".join(lines)
 
     if args.install:

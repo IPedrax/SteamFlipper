@@ -10,6 +10,7 @@
 #include "Utils/Config/LuaConfig.h"
 #include "Utils/Logging/Log.h"
 #include "Hook/Hooks_Decryption.h"
+#include "Hook/Hooks_NetPacket.h"
 #include "Hook/Hooks_Package.h"
 #include "Utils/SteamMetadata/IPCLoader.h"
 #include "Utils/Update/AppUpdater.h"
@@ -576,6 +577,7 @@ namespace {
         // working". Ownership and depot decryption do not depend on it.
         j += row("Live refresh", Hooks_Package::RefreshStatus(), false);
         j += row("Key hook", Hooks_Decryption::GetBinaryStatus(), false);
+        j += row("Packet layout", Hooks_NetPacket::PacketLayoutStatus(), false);
         j += row("IPC spec", IPCLoader::Status(), false);
         j += row("API", "127.0.0.1:" + std::to_string(kApiPort), false);
         j += "]}";
