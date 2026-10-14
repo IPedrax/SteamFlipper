@@ -38,7 +38,9 @@ struct PatternEntry {
     std::string name;
     uintptr_t   rva = 0;   // 0 = not present in file
     std::string sig;        // empty = not present in file
-    uintptr_t   fieldOffset = 0;   // 0 = not present in file; see FindFieldOffset
+    // Per-build numbers recorded beside the function (field_offset,
+    // config_store_offset, ...), by key. Absent from the map = not in the file.
+    std::unordered_map<std::string, uintptr_t> fields;
 };
 
 // key = Fnv1aHash(funcName)
@@ -132,9 +134,15 @@ static PatternMap TableToPatternMap(const toml::table& tbl)
             }
         }
         if (auto v = sub["sig"].value<std::string>()) entry.sig = *v;
-        if (auto v = sub["field_offset"].value<std::string>()) {
-            if (const auto off = SFPlatform::Numbers::ParseHexUInt64(*v))
-                entry.fieldOffset = static_cast<uintptr_t>(*off);
+        // Everything else in the section that is a hex string is a per-build
+        // number the generator recorded beside this function. Taken by key, so
+        // the next one the generator learns to derive needs no change here.
+        for (auto& [k, v] : sub) {
+            const std::string key(k.str());
+            if (key == "name" || key == "rva" || key == "sig") continue;
+            if (auto s = v.value<std::string>())
+                if (const auto n = SFPlatform::Numbers::ParseHexUInt64(*s))
+                    entry.fields[key] = static_cast<uintptr_t>(*n);
         }
 
         map[hashKey] = std::move(entry);
@@ -322,16 +330,20 @@ bool Load(SFPlatform::DynamicLibrary::ModuleHandle module, const std::string& dl
     return false;
 }
 
-uintptr_t FindFieldOffset(SFPlatform::DynamicLibrary::ModuleHandle module, const char* funcName)
+uintptr_t FindField(SFPlatform::DynamicLibrary::ModuleHandle module,
+                    const char* funcName, const char* key)
 {
-    // Quiet on purpose. A pattern file written before this field existed is a
+    // Quiet on purpose. A pattern file written before a field existed is a
     // normal state, not a missing function, and the caller is the one who knows
-    // what its absence means. Zero is never a valid answer: offset zero is the
-    // start of the object, which is not a subobject.
+    // what its absence means. Zero is returned for absent and is never a valid
+    // answer for what is recorded here: offset zero is the start of the object,
+    // which is not a subobject, and vtable slot zero is a destructor.
     const auto mapIt = g_moduleMaps.find(module);
     if (mapIt == g_moduleMaps.end()) return 0;
     const auto entryIt = mapIt->second.find(Fnv1aHash(funcName));
-    return entryIt == mapIt->second.end() ? 0 : entryIt->second.fieldOffset;
+    if (entryIt == mapIt->second.end()) return 0;
+    const auto f = entryIt->second.fields.find(key);
+    return f == entryIt->second.fields.end() ? 0 : f->second;
 }
 
 void* FindPattern(SFPlatform::DynamicLibrary::ModuleHandle module, const char* funcName)

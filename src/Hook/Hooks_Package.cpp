@@ -257,7 +257,7 @@ namespace Hooks_Package {
             LOG_PACKAGE_WARN("CPackageInfoCacheGlobal unavailable; fake license disabled");
 
         g_packageInfoCacheOffset =
-            PatternLoader::FindFieldOffset(client_hModule, "CPackageInfoCacheGlobal");
+            PatternLoader::FindField(client_hModule, "CPackageInfoCacheGlobal", "field_offset");
         if (g_ppPackageInfoCacheOwner && g_packageInfoCacheOffset == 0) {
             // A pattern file written before the offset was recorded. Using the
             // old constant here is the crash, so ownership injection stays off

@@ -21,26 +21,23 @@ namespace {
      *
      *     lea  <global>(%ebx),%eax     ; the singleton CPackageInfoCache hangs off
      *     mov  (%eax),%eax             ; the object
-     *     lea  0xD60(%eax),%edx        ; this = object + 0xD60
-     *     mov  0xD60(%eax),%eax        ; its vptr
-     *     mov  0x18(%eax),%eax         ; vtable slot 6
+     *     lea  <OFF>(%eax),%edx        ; this = object + OFF
+     *     mov  <OFF>(%eax),%eax        ; its vptr
+     *     mov  <SLOT*4>(%eax),%eax     ; the method
      *     push $0x80 / buf / name / $1 / this
      *     call *%eax
      *
-     * The write site is identical but for the slot, 0x38, which is what makes
-     * the read slot trustworthy rather than a guess: two independent sites,
-     * one global, one subobject offset, different slots for get and set.
+     * OFF and SLOT are per build and come from the pattern file, where the
+     * generator read them out of exactly that sequence. They were constants
+     * here, 0xD60 and 6, and Steam's next update made OFF 0x1098: the lookup
+     * found no vtable at the old place and the hook stayed off. That was the
+     * safe way to be wrong, and it is still only luck that it was safe, so the
+     * numbers no longer live in this file.
      *
      * Resolved and reported before anything calls through it. An address that
      * is merely plausible is exactly what went wrong with the licence pair,
      * and a wrong call here runs on Steam's own config store.
      */
-    constexpr uintptr_t kConfigStoreOffset = 0xD60;
-    constexpr size_t    kGetBinarySlot     = 6;
-    // RVA of CPackageInfoCacheGlobal, used only to turn the resolved address
-    // back into one that can be checked against the binary by hand.
-    constexpr uintptr_t kGlobalRva = 0x2F85B20;
-
     std::string g_getBinaryStatus = "not attempted yet";
 
     // Read-only. Returns the address Steam would call, or nullptr while the
@@ -52,27 +49,44 @@ namespace {
             g_getBinaryStatus = "CPackageInfoCacheGlobal not resolved";
             return nullptr;
         }
+        // Asked for before the singleton, so a pattern file that does not carry
+        // them is reported at once instead of looking like a client that is
+        // merely slow to start. Zero is never valid for either: offset zero is
+        // the object itself and vtable slot zero is a destructor.
+        const uintptr_t storeOff =
+            PatternLoader::FindField(client_hModule, "CPackageInfoCacheGlobal", "config_store_offset");
+        const uintptr_t slot =
+            PatternLoader::FindField(client_hModule, "CPackageInfoCacheGlobal", "get_binary_slot");
+        if (!storeOff || !slot) {
+            g_getBinaryStatus = "off: this build's pattern file has no config-store "
+                                "offset (re-run tools/install_linux.sh)";
+            return nullptr;
+        }
+
         void* object = *owner;
         if (!object) {
             g_getBinaryStatus = "waiting for Steam to construct the singleton";
             return nullptr;
         }
-        void* store = static_cast<char*>(object) + kConfigStoreOffset;
+        void* store = static_cast<char*>(object) + storeOff;
         void** vtbl = *reinterpret_cast<void***>(store);
         if (!vtbl) {
             g_getBinaryStatus = "config store has no vtable pointer";
             return nullptr;
         }
-        void* fn = vtbl[kGetBinarySlot];
+        void* fn = vtbl[slot];
         if (!fn) {
-            g_getBinaryStatus = "vtable slot 6 is empty";
+            g_getBinaryStatus = "vtable slot " + std::to_string(slot) + " is empty";
             return nullptr;
         }
-        const uintptr_t base = reinterpret_cast<uintptr_t>(owner) - kGlobalRva;
-        const uintptr_t rva  = reinterpret_cast<uintptr_t>(fn) - base;
         char buf[96];
-        snprintf(buf, sizeof(buf), "resolved, rva 0x%lX (not hooked yet)",
-                 static_cast<unsigned long>(rva));
+        if (void* base = SFPlatform::DynamicLibrary::GetModuleBase(client_hModule)) {
+            snprintf(buf, sizeof(buf), "resolved, rva 0x%lX (not hooked yet)",
+                     static_cast<unsigned long>(reinterpret_cast<uintptr_t>(fn) -
+                                                reinterpret_cast<uintptr_t>(base)));
+        } else {
+            snprintf(buf, sizeof(buf), "resolved (not hooked yet)");
+        }
         g_getBinaryStatus = buf;
         return fn;
     }

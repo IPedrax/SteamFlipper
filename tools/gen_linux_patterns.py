@@ -371,6 +371,56 @@ def derive_from_call_site(data, secs, got, fde_for, anchor_lo, anchor_hi):
     return out
 
 
+CONFIG_KEY_FORMAT = r"Software\Valve\Steam\Depots\%u\DecryptionKey"
+
+
+def derive_config_store(data, secs, got, global_va):
+    """Where ConfigStore::GetBinary hangs off the singleton, read from its caller.
+
+    The method has no VProf scope and no symbol, and Steam calls it through a
+    vtable, so there is no address to find. What exists is the code that builds
+    "Software\\Valve\\Steam\\Depots\\%u\\DecryptionKey" and then calls it. In
+    both builds seen the sequence is identical and only the numbers move:
+
+        lea  <global>(%ebx),%reg      the singleton CPackageInfoCache hangs off
+        mov  (%reg),%reg
+        lea  <OFF>(%reg),%reg         this = object + OFF
+        mov  <OFF>(%reg),%reg         its vptr
+        mov  <SLOT*4>(%reg),%reg      the method, loaded for  call *%reg
+
+    OFF was 0xD60 and is 0x1098 now. It used to be a constant in the module, and
+    a constant is wrong the moment Valve moves it. Returns (OFF, SLOT), or None.
+
+    Strict on purpose, because hooking a function picked from a near miss is a
+    crash, and the cost of declining is only that the key hook stays off:
+      - the global must be the one the module already resolves,
+      - the two OFFs in the sequence must agree,
+      - and every match must give the same answer. The write site beside it has
+        the same shape with a different slot, so two answers means this cannot
+        tell the read from the write and must not pick one.
+    """
+    _, va = vaddr_of_string(data, secs, CONFIG_KEY_FORMAT)
+    if va is None:
+        return None
+    ref = struct.pack("<i", va - got)
+    seq = re.compile(
+        rb"\x8d[\x80-\xbf](....)"      # lea  <global>(%ebx),%reg
+        rb"\x8b[\x00-\x3f]"            # mov  (%reg),%reg
+        rb"\x8d[\x80-\xbf](....)"      # lea  <OFF>(%reg),%reg
+        rb"\x8b[\x80-\xbf](....)"      # mov  <OFF>(%reg),%reg
+        rb"\x8b[\x40-\x7f](.)", re.S)  # mov  <disp8>(%reg),%reg
+    answers = set()
+    for m in re.finditer(re.escape(ref), data):
+        for s in seq.finditer(data[m.end(): m.end() + 96]):
+            g, off_a, off_b, disp = s.groups()
+            if (got + struct.unpack("<i", g)[0]) & 0xFFFFFFFF != global_va:
+                continue
+            if off_a != off_b or disp[0] % 4:
+                continue
+            answers.add((struct.unpack("<I", off_a)[0], disp[0] // 4))
+    return answers.pop() if len(answers) == 1 else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary", type=pathlib.Path)
@@ -463,10 +513,25 @@ def main():
                 # Written into the pattern file, not left for the module to
                 # know. It used to be a constant in Hooks_Package.cpp that this
                 # line asked a human to keep in step, and nobody could.
-                extras["CPackageInfoCacheGlobal"] = cache_off
+                extras["CPackageInfoCacheGlobal"] = {"field_offset": cache_off}
                 print(f"  {'cache subobject offset':<31} 0x{cache_off:X}  "
                       f"(recorded in the pattern file as field_offset)",
                       file=sys.stderr)
+
+    # The key-serving hook's target, derived from the same singleton. Absent is
+    # fine: the module then leaves the hook off and says so, which is the right
+    # outcome on a build this cannot read.
+    if component == "steamclient" and "CPackageInfoCacheGlobal" in found:
+        store = derive_config_store(data, secs, got, found["CPackageInfoCacheGlobal"])
+        if store:
+            off, slot = store
+            extras.setdefault("CPackageInfoCacheGlobal", {}).update(
+                config_store_offset=off, get_binary_slot=slot)
+            print(f"  {'config store subobject':<31} 0x{off:X}, GetBinary is "
+                  f"vtable slot {slot}", file=sys.stderr)
+        else:
+            print(f"  {'config store subobject':<31} NOT DERIVED; the key-serving "
+                  f"hook will stay off on this build", file=sys.stderr)
 
     if component == "steamclient" and "CUtlMemoryGrow" not in found:
         grow, klass = derive_cutlmemory_grow(data, secs, fde_for)
@@ -534,8 +599,8 @@ def main():
                   f'name = "{name}"',
                   f'rva = "0x{va:X}"',
                   f'sig = "{make_sig(data, secs, va)}"']
-        if name in extras:
-            lines.append(f'field_offset = "0x{extras[name]:X}"')
+        for key, value in extras.get(name, {}).items():
+            lines.append(f'{key} = "0x{value:X}"')
         lines.append("")
     text = "\n".join(lines)
 
